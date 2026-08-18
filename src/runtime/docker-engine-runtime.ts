@@ -1,13 +1,11 @@
-import { request as httpRequest } from "node:http";
-
 import { OrchestratorError } from "../domain/errors.js";
 import type { RuntimeResource } from "../domain/types.js";
+import {
+  UnixSocketDockerEngineTransport,
+  type DockerEngineResponse,
+  type DockerEngineTransport,
+} from "./docker-engine-transport.js";
 import type { CreateRuntimeRequest, RuntimeAdapter } from "./runtime-adapter.js";
-
-interface DockerResponse {
-  readonly Id?: string;
-  readonly message?: string;
-}
 
 export interface DockerEngineOptions {
   readonly socketPath: string;
@@ -16,22 +14,36 @@ export interface DockerEngineOptions {
 }
 
 export class DockerEngineRuntime implements RuntimeAdapter {
-  public constructor(private readonly options: DockerEngineOptions) {}
+  private readonly transport: DockerEngineTransport;
+
+  public constructor(
+    private readonly options: DockerEngineOptions,
+    transport?: DockerEngineTransport,
+  ) {
+    if (!/^\d+\.\d+$/.test(options.apiVersion)) throw new Error("Docker API version must be numeric");
+    if (!options.image.trim() || options.image.length > 255) throw new Error("session image must be non-empty");
+    this.transport = transport ?? new UnixSocketDockerEngineTransport(options.socketPath);
+  }
 
   public async create(input: CreateRuntimeRequest): Promise<RuntimeResource> {
     const containerName = `fireball-${input.sessionId}`;
     const networkNamespace = `fireball-net-${input.sessionId}`;
-    await this.call("POST", `/v${this.options.apiVersion}/networks/create`, {
+    let networkCreated = false;
+    let containerCreated = false;
+    let containerId: string | undefined;
+    await this.call("POST", `/v${this.options.apiVersion}/networks/create`, [201], {
       Name: networkNamespace,
       CheckDuplicate: true,
       Internal: false,
       Labels: isolationLabels(input),
     });
+    networkCreated = true;
 
     try {
       const response = await this.call(
         "POST",
         `/v${this.options.apiVersion}/containers/create?name=${encodeURIComponent(containerName)}`,
+        [201],
         {
           Image: this.options.image,
           Labels: isolationLabels(input),
@@ -48,69 +60,67 @@ export class DockerEngineRuntime implements RuntimeAdapter {
           },
         },
       );
+      containerCreated = true;
       if (!response.Id) throw new Error("Docker did not return a container id");
-      await this.call("POST", `/v${this.options.apiVersion}/containers/${response.Id}/start`);
+      containerId = response.Id;
+      await this.call("POST", `/v${this.options.apiVersion}/containers/${containerId}/start`, [204]);
       return {
-        containerId: response.Id,
+        containerId,
         containerName,
         networkNamespace,
         storageNamespace: `/run/fireball-session:${response.Id}`,
       };
     } catch (error) {
-      await this.call("DELETE", `/v${this.options.apiVersion}/networks/${networkNamespace}`).catch(() => undefined);
-      throw error;
+      const rollbackFailures: string[] = [];
+      if (containerCreated) {
+        const containerReference = containerId ?? containerName;
+        await this.call(
+          "DELETE",
+          `/v${this.options.apiVersion}/containers/${encodeURIComponent(containerReference)}?force=true&v=true`,
+          [204, 404],
+        ).catch((rollbackError: unknown) => rollbackFailures.push(errorMessage(rollbackError)));
+      }
+      if (networkCreated) {
+        await this.call("DELETE", `/v${this.options.apiVersion}/networks/${networkNamespace}`, [204, 404]).catch(
+          (rollbackError: unknown) => rollbackFailures.push(errorMessage(rollbackError)),
+        );
+      }
+      if (rollbackFailures.length > 0) {
+        throw new OrchestratorError(
+          "RUNTIME_FAILURE",
+          `${errorMessage(error)}; rollback failed: ${rollbackFailures.join("; ")}`,
+          503,
+        );
+      }
+      if (error instanceof OrchestratorError) throw error;
+      throw new OrchestratorError("RUNTIME_FAILURE", errorMessage(error), 503);
     }
   }
 
   public async destroy(resource: RuntimeResource): Promise<void> {
     const failures: string[] = [];
-    await this.call("DELETE", `/v${this.options.apiVersion}/containers/${resource.containerId}?force=true&v=true`).catch(
-      (error: unknown) => failures.push(errorMessage(error)),
-    );
-    await this.call("DELETE", `/v${this.options.apiVersion}/networks/${resource.networkNamespace}`).catch(
-      (error: unknown) => failures.push(errorMessage(error)),
-    );
+    await this.call(
+      "DELETE",
+      `/v${this.options.apiVersion}/containers/${resource.containerId}?force=true&v=true`,
+      [204, 404],
+    ).catch((error: unknown) => failures.push(errorMessage(error)));
+    await this.call(
+      "DELETE",
+      `/v${this.options.apiVersion}/networks/${resource.networkNamespace}`,
+      [204, 404],
+    ).catch((error: unknown) => failures.push(errorMessage(error)));
     if (failures.length > 0) {
       throw new OrchestratorError("RUNTIME_FAILURE", failures.join("; "), 503);
     }
   }
 
-  private async call(method: string, path: string, body?: unknown): Promise<DockerResponse> {
-    const payload = body === undefined ? undefined : JSON.stringify(body);
-    return await new Promise<DockerResponse>((resolve, reject) => {
-      const request = httpRequest(
-        {
-          socketPath: this.options.socketPath,
-          method,
-          path,
-          headers: payload
-            ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) }
-            : undefined,
-        },
-        (response) => {
-          const chunks: Buffer[] = [];
-          response.on("data", (chunk: Buffer) => chunks.push(chunk));
-          response.on("end", () => {
-            const text = Buffer.concat(chunks).toString("utf8");
-            let parsed: DockerResponse;
-            try {
-              parsed = text ? (JSON.parse(text) as DockerResponse) : {};
-            } catch {
-              reject(new OrchestratorError("RUNTIME_FAILURE", "Docker Engine returned invalid JSON", 503));
-              return;
-            }
-            if ((response.statusCode ?? 500) >= 400) {
-              reject(new OrchestratorError("RUNTIME_FAILURE", parsed.message ?? "Docker Engine request failed", 503));
-              return;
-            }
-            resolve(parsed);
-          });
-        },
-      );
-      request.once("error", (error) => reject(new OrchestratorError("RUNTIME_FAILURE", error.message, 503)));
-      if (payload) request.write(payload);
-      request.end();
-    });
+  private async call(
+    method: "POST" | "DELETE",
+    path: string,
+    acceptedStatusCodes: readonly number[],
+    body?: unknown,
+  ): Promise<DockerEngineResponse> {
+    return await this.transport.call({ method, path, acceptedStatusCodes, ...(body === undefined ? {} : { body }) });
   }
 }
 

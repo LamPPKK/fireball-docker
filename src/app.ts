@@ -21,6 +21,12 @@ export function buildApp(dependencies: AppDependencies): FastifyInstance {
     return reply.code(201).send(result);
   });
 
+  app.post<{ Body: { ticket: string } }>(
+    "/orchestrator/v1/signaling/tickets/exchange",
+    { schema: { body: signalingTicketSchema } },
+    async (request) => dependencies.sessions.exchangeSignalingTicket(request.body.ticket),
+  );
+
   app.get<{ Params: { id: string } }>(
     "/orchestrator/v1/sessions/:id",
     { schema: { params: sessionIdSchema } },
@@ -59,6 +65,15 @@ const sessionIdSchema = {
   additionalProperties: false,
   required: ["id"],
   properties: { id: { type: "string", format: "uuid" } },
+} as const;
+
+const signalingTicketSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["ticket"],
+  properties: {
+    ticket: { type: "string", minLength: 43, maxLength: 43, pattern: "^[A-Za-z0-9_-]+$" },
+  },
 } as const;
 
 function isValidationError(error: unknown): error is Error & { validation: unknown } {

@@ -25,12 +25,22 @@ export interface SessionRecord {
   readonly createdAt: string;
   readonly quota: SessionQuota;
   readonly runtime: RuntimeResource;
-  readonly signalingTicketHash: string;
   readonly failure?: string;
 }
 
 export interface CreateSessionResult {
-  readonly session: Omit<SessionRecord, "signalingTicketHash">;
+  readonly session: SessionRecord;
   readonly signalingTicket: string;
   readonly ticketExpiresInSeconds: number;
+}
+
+export interface SignalingTokenExchangeResult {
+  readonly signalingToken: string;
+  readonly tokenExpiresInSeconds: number;
+}
+
+export interface SignalingAuthorization {
+  readonly sessionId: string;
+  readonly tenantId: string;
+  readonly runtime: RuntimeResource;
 }
