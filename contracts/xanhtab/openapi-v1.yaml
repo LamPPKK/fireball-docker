@@ -1,0 +1,143 @@
+openapi: 3.1.0
+info:
+  title: XanhTab Control API
+  version: 1.0.0
+  description: Zero-account, single-session control API. Mutations require the HttpOnly session cookie, same-origin request, and X-XanhTab-CSRF header.
+servers:
+  - url: https://xanhtab.local:8443
+paths:
+  /healthz:
+    get:
+      operationId: health
+      responses:
+        "204": { description: Service process is accepting requests }
+  /api/v1/status:
+    get:
+      operationId: publicStatus
+      responses:
+        "200": { description: Non-sensitive device and pairing state }
+  /api/v1/pair/exchange:
+    post:
+      operationId: exchangePairingSecret
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [secret]
+              properties: { secret: { type: string, minLength: 40, maxLength: 128 } }
+      responses:
+        "200": { description: One-time secret exchanged for an HttpOnly cookie and CSRF token }
+        "401": { $ref: "#/components/responses/Error" }
+  /api/v1/session:
+    get:
+      operationId: getSession
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200": { description: Current session and RAM-only history }
+    post:
+      operationId: createSession
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { url: { type: string, format: uri } }
+      responses:
+        "200": { description: Session started }
+  /api/v1/session/{id}:
+    delete:
+      operationId: burnSession
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: "#/components/parameters/SessionId" }]
+      responses:
+        "200": { description: Browser tree stopped, egress reset, tmpfs cleared, and auth revoked }
+  /api/v1/session/{id}/navigation:
+    post:
+      operationId: navigate
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: "#/components/parameters/SessionId" }]
+      responses: { "200": { description: Navigation accepted } }
+  /api/v1/session/{id}/egress:
+    put:
+      operationId: selectEgress
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: "#/components/parameters/SessionId" }]
+      responses: { "200": { description: Session restarted behind selected adapter } }
+  /api/v1/session/{id}/stream-profile:
+    put:
+      operationId: setStreamProfile
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: "#/components/parameters/SessionId" }]
+      responses: { "200": { description: Stream profile selected } }
+  /api/v1/session/{id}/blocklist:
+    put:
+      operationId: setSessionBlocklist
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: "#/components/parameters/SessionId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties: { enabled: { type: boolean } }
+      responses: { "200": { description: Session blocklist policy updated } }
+  /api/v1/session/{id}/auto-burn:
+    put:
+      operationId: setSessionAutoBurn
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      parameters: [{ $ref: "#/components/parameters/SessionId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [seconds]
+              properties: { seconds: { type: integer, minimum: 0, maximum: 86400 } }
+      responses: { "200": { description: Session inactivity burn threshold updated } }
+  /api/v1/metrics:
+    get:
+      operationId: metrics
+      security: [{ sessionCookie: [] }]
+      responses: { "200": { description: Hardware, stream, egress, and blocklist metrics } }
+  /api/v1/webrtc/ticket:
+    post:
+      operationId: issueWebRtcTicket
+      security: [{ sessionCookie: [], csrfHeader: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [purpose]
+              properties: { purpose: { enum: [events, signaling] } }
+      responses: { "200": { description: Single-use signaling ticket valid for at most five minutes } }
+  /ws/v1/session/{id}/events:
+    get:
+      operationId: sessionEventsWebSocket
+      parameters:
+        - { $ref: "#/components/parameters/SessionId" }
+      responses: { "101": { description: Event WebSocket; the first text frame must be an authenticate object containing an events-purpose ticket } }
+  /ws/v1/session/{id}/signal:
+    get:
+      operationId: sessionSignalingWebSocket
+      parameters:
+        - { $ref: "#/components/parameters/SessionId" }
+      responses:
+        "101": { description: WebRTC signaling relay; the first text frame must be an authenticate object containing a signaling-purpose ticket }
+        "502": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    sessionCookie: { type: apiKey, in: cookie, name: xanhtab_session }
+    csrfHeader: { type: apiKey, in: header, name: X-XanhTab-CSRF }
+  parameters:
+    SessionId: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+  responses:
+    Error:
+      description: Stable error code and redacted message. Dependency, encoder, signaling, and leak-test failures use DEPENDENCY_UNAVAILABLE, ENCODER_UNAVAILABLE, SIGNALING_UNAVAILABLE, and LEAK_TEST_FAILED.

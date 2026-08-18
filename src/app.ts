@@ -1,0 +1,66 @@
+import Fastify, { type FastifyInstance } from "fastify";
+
+import type { Authenticator } from "./auth/authenticator.js";
+import { OrchestratorError } from "./domain/errors.js";
+import { SessionService } from "./domain/session-service.js";
+
+export interface AppDependencies {
+  readonly authenticator: Authenticator;
+  readonly sessions: SessionService;
+  readonly logger?: boolean;
+}
+
+export function buildApp(dependencies: AppDependencies): FastifyInstance {
+  const app = Fastify({ logger: dependencies.logger ?? false, bodyLimit: 16 * 1024 });
+
+  app.get("/healthz", async (_request, reply) => reply.code(204).send());
+
+  app.post("/orchestrator/v1/sessions", async (request, reply) => {
+    const context = await dependencies.authenticator.authenticate(request.headers);
+    const result = await dependencies.sessions.create(context);
+    return reply.code(201).send(result);
+  });
+
+  app.get<{ Params: { id: string } }>(
+    "/orchestrator/v1/sessions/:id",
+    { schema: { params: sessionIdSchema } },
+    async (request) => {
+      const context = await dependencies.authenticator.authenticate(request.headers);
+      return { session: dependencies.sessions.get(context, request.params.id) };
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    "/orchestrator/v1/sessions/:id",
+    { schema: { params: sessionIdSchema } },
+    async (request, reply) => {
+      const context = await dependencies.authenticator.authenticate(request.headers);
+      await dependencies.sessions.burn(context, request.params.id);
+      return reply.code(204).send();
+    },
+  );
+
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof OrchestratorError) {
+      return reply.code(error.statusCode).send({ error: { code: error.code, message: error.message } });
+    }
+    if (isValidationError(error)) {
+      return reply.code(400).send({ error: { code: "VALIDATION_FAILED", message: "request validation failed" } });
+    }
+    app.log.error(error);
+    return reply.code(500).send({ error: { code: "RUNTIME_FAILURE", message: "internal orchestrator failure" } });
+  });
+
+  return app;
+}
+
+const sessionIdSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id"],
+  properties: { id: { type: "string", format: "uuid" } },
+} as const;
+
+function isValidationError(error: unknown): error is Error & { validation: unknown } {
+  return error instanceof Error && "validation" in error;
+}
