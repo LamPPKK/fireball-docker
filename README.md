@@ -55,6 +55,27 @@ docker build -f deploy/Dockerfile -t fireball/orchestrator:dev .
 
 The test suite covers cross-tenant denial, pairing/signaling replay and expiry, burn revocation, failed cleanup state, real asymmetric JWT signing/verification, Docker isolation options, idempotent cleanup, and create rollback.
 
+### Docker Desktop on macOS
+
+The orchestrator image is Linux-based even when it is built from macOS. On an
+Intel Mac, the reproducible host build lane is:
+
+```sh
+docker build --platform linux/amd64 \
+  -f deploy/Dockerfile \
+  -t fireball/orchestrator:macos-smoke .
+```
+
+The normal container command uses `NODE_ENV=production` and therefore fails
+closed until the required OIDC issuer, audience, and JWKS settings are present.
+For an internal health smoke, override `NODE_ENV=development`, keep the daemon
+on its container loopback address, and query `/healthz` from inside that
+container. Development authentication is intentionally forbidden on a
+non-loopback listener.
+
+There is no user-facing Docker dashboard in this repository yet, so API output
+or Docker Desktop screenshots are not presented as product UI.
+
 ## E1 work still open
 
 - Build and pin the WPE WebKit + GStreamer H.264 session image for `linux/amd64` and `linux/arm64`.
