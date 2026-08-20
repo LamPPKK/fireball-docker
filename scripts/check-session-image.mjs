@@ -7,6 +7,8 @@ const dockerfile = await readFile(new URL("../session/Dockerfile", import.meta.u
 const manifest = JSON.parse(await readFile(new URL("../session/image-manifest.json", import.meta.url), "utf8"));
 const packageLock = JSON.parse(await readFile(new URL("../session/package-lock.json", import.meta.url), "utf8"));
 const supervisor = await readFile(new URL("../session/supervisor.mjs", import.meta.url), "utf8");
+const containerSmoke = await readFile(new URL("../session/container-smoke.mjs", import.meta.url), "utf8");
+const imageWorkflow = await readFile(new URL("../.github/workflows/session-image.yml", import.meta.url), "utf8");
 
 assert.deepEqual(Object.keys(manifest).sort(), [
   "base_image",
@@ -51,5 +53,18 @@ assert.match(packageLock.packages["node_modules/ws"].integrity, /^sha512-/);
 assert.match(supervisor, /run-web-server=false/);
 assert.match(supervisor, /stun-server=/);
 assert.doesNotMatch(supervisor, /stun\.l\.google\.com/);
+for (const required of [
+  "--read-only",
+  "--cap-drop=ALL",
+  "--security-opt=no-new-privileges:true",
+  "127.0.0.1::8444",
+  "expectAuthenticationRejected",
+  "expectControllerRejected",
+  "await waitForHealthy()",
+]) {
+  assert.ok(containerSmoke.includes(required), `container smoke is missing: ${required}`);
+}
+assert.match(imageWorkflow, /npm run container:smoke --prefix session/);
+assert.match(imageWorkflow, /actions\/setup-node@v6/);
 
 process.stdout.write("session image contract is internally consistent\n");

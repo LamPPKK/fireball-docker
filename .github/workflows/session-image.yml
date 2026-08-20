@@ -44,3 +44,11 @@ jobs:
           test "$(docker image inspect --format '{{.Config.User}}' "fireball/session-wpe:test-${{ matrix.suffix }}")" = "10001:10001"
           docker run --rm --platform "${{ matrix.platform }}" --entrypoint /usr/bin/node "fireball/session-wpe:test-${{ matrix.suffix }}" --check /opt/fireball-session/supervisor.mjs
           docker run --rm --platform "${{ matrix.platform }}" --entrypoint cat "fireball/session-wpe:test-${{ matrix.suffix }}" /usr/share/fireball-session/component-versions.txt
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: session/package-lock.json
+      - run: npm ci --prefix session --ignore-scripts
+      - name: Smoke running session container
+        run: npm run container:smoke --prefix session -- "fireball/session-wpe:test-${{ matrix.suffix }}" "${{ matrix.platform }}"

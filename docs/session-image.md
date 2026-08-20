@@ -58,7 +58,7 @@ npm ci --prefix session --ignore-scripts
 npm run check
 ```
 
-The `session-image` GitHub workflow builds and loads each architecture independently under Buildx/QEMU, then checks `wpesrc`, `webrtcsink`, `openh264enc`, the non-root user, supervisor syntax, and embedded component versions.
+The `session-image` GitHub workflow builds and loads each architecture independently under Buildx/QEMU, then checks `wpesrc`, `webrtcsink`, `openh264enc`, the non-root user, supervisor syntax, and embedded component versions. It also starts the image with the production read-only/capability/tmpfs restrictions, waits for Docker health, verifies loopback-only signaling, rejects a bad bootstrap secret and a second controller, and proves the controller lease can reconnect before removing the container.
 
 Promotion additionally requires:
 

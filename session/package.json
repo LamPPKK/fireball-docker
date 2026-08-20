@@ -8,7 +8,8 @@
     "node": ">=20 <27"
   },
   "scripts": {
-    "check": "node --check supervisor.mjs && node --check healthcheck.mjs && node --test test/*.test.mjs",
+    "check": "node --check supervisor.mjs && node --check healthcheck.mjs && node --check container-smoke.mjs && node --test test/*.test.mjs",
+    "container:smoke": "node container-smoke.mjs",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {

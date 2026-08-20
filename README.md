@@ -38,7 +38,7 @@ Tickets and tokens are never accepted in query strings. After the WebSocket upgr
 
 [`session/Dockerfile`](session/Dockerfile) builds for `linux/amd64` and `linux/arm64` from a Debian Trixie multi-platform digest. It compiles only the `gst-plugin-webrtc` package from the exact GStreamer `1.26.2` source revision, with Cargo's lockfile enforced. The runtime is non-root UID/GID `10001`, uses a read-only root filesystem plus `/run/fireball-session` tmpfs, and records installed component versions inside the artifact.
 
-This is an engineering candidate, not a promoted release. The normal CI validates source, contracts, authentication behavior, and image provenance. The manual `session-image` workflow must build and smoke both architectures before a digest can be promoted. End-to-end WPE rendering, H.264 performance, WebRTC media negotiation, TURN, and the two-tenant isolation gate remain release evidence still to collect. See [the session-image architecture and promotion gates](docs/session-image.md).
+This is an engineering candidate, not a promoted release. The normal CI validates source, contracts, authentication behavior, and image provenance. The manual `session-image` workflow must build, start, health-check, authenticate, reconnect, and smoke both architectures before a digest can be promoted. End-to-end H.264 performance, WebRTC media negotiation, TURN, and the two-tenant isolation gate remain release evidence still to collect. See [the session-image architecture and promotion gates](docs/session-image.md).
 
 ## Production configuration
 
