@@ -61,7 +61,7 @@ export class SignalingGateway {
         shutdown(1011, "relay peer unavailable");
         return;
       }
-      if (destination.bufferedAmount > this.maximumBufferedBytes) {
+      if (destination.bufferedAmount + rawDataByteLength(data) > this.maximumBufferedBytes) {
         shutdown(1013, "relay backpressure limit");
         return;
       }
@@ -154,6 +154,13 @@ function rawDataToBuffer(data: RawData): Buffer {
   if (Array.isArray(data)) return Buffer.concat(data);
   if (data instanceof ArrayBuffer) return Buffer.from(data);
   return Buffer.from(data);
+}
+
+function rawDataByteLength(data: RawData): number {
+  if (Array.isArray(data)) {
+    return data.reduce((total, chunk) => total + chunk.byteLength, 0);
+  }
+  return data.byteLength;
 }
 
 function closeSocket(socket: WebSocket, code: number, reason: string): void {

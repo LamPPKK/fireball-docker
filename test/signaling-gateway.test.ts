@@ -106,6 +106,40 @@ test("signaling connection closes when the client does not authenticate before t
   assert.equal((await nextClose(client)).code, 1008);
 });
 
+test("signaling relay rejects a frame that would exceed its backpressure budget", async (context) => {
+  const upstream = await startUpstream(context);
+  const runtime = new FixedRuntime(upstream.endpoint);
+  const sessions = new SessionService(runtime);
+  const app = buildApp({
+    authenticator: new DevelopmentAuthenticator("test"),
+    sessions,
+    signaling: new SignalingGateway(
+      sessions,
+      new WebSocketSignalingConnector(),
+      new SignalingConnectionRegistry(),
+      { maximumBufferedBytes: 96 },
+    ),
+    signalingAllowedOrigins: new Set([origin]),
+  });
+  await app.ready();
+  const created = await sessions.create({ tenantId: "alpha", subject: "alice" });
+  const exchanged = sessions.exchangeSignalingTicket(created.signalingTicket);
+  const client = await app.injectWS("/orchestrator/v1/signaling", { headers: { origin } });
+  context.after(async () => {
+    client.terminate();
+    for (const socket of app.websocketServer.clients) socket.terminate();
+    await app.close();
+  });
+
+  const ready = nextMessage(client);
+  client.send(JSON.stringify({ type: "authenticate", token: exchanged.signalingToken }));
+  assert.equal(JSON.parse((await ready).text).type, "ready");
+
+  const closed = nextClose(client);
+  client.send(Buffer.alloc(97), { binary: true });
+  assert.equal((await closed).code, 1013);
+});
+
 interface UpstreamFixture {
   readonly endpoint: string;
   readonly authentication: Promise<string>;
