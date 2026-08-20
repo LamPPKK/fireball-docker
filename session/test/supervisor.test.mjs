@@ -53,6 +53,8 @@ test("pipeline is one WPE source with explicit H264, Opus, control, and no publi
   const command = argumentsList.join(" ");
 
   assert.equal(argumentsList.filter((argument) => argument === "wpesrc").length, 1);
+  assert.match(command, /video\/x-raw,format=BGRA/);
+  assert.doesNotMatch(command, /gldownload/);
   assert.match(command, /openh264enc/);
   assert.match(command, /video\/x-h264,profile=constrained-baseline/);
   assert.match(command, /opusenc bitrate=64000/);

@@ -74,6 +74,7 @@ COPY --chown=10001:10001 session/supervisor.mjs session/healthcheck.mjs /opt/fir
 COPY --chown=10001:10001 session/home.html /usr/share/fireball-session/home.html
 
 ENV HOME=/run/fireball-session/home \
+    XDG_RUNTIME_DIR=/run/fireball-session/runtime \
     XDG_CACHE_HOME=/run/fireball-session/cache \
     XDG_CONFIG_HOME=/run/fireball-session/config \
     XDG_DATA_HOME=/run/fireball-session/data \

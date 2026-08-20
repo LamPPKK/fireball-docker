@@ -39,6 +39,7 @@ for (const required of [
   "libwpewebkit-2.0-1",
   "libgstrswebrtc.so",
   "USER 10001:10001",
+  "XDG_RUNTIME_DIR=/run/fireball-session/runtime",
   "EXPOSE 8444",
   "HEALTHCHECK",
 ]) {
@@ -52,6 +53,8 @@ assert.equal(packageLock.packages["node_modules/ws"].version, "8.21.3");
 assert.match(packageLock.packages["node_modules/ws"].integrity, /^sha512-/);
 assert.match(supervisor, /run-web-server=false/);
 assert.match(supervisor, /stun-server=/);
+assert.match(supervisor, /video\/x-raw,format=BGRA/);
+assert.doesNotMatch(supervisor, /gldownload/);
 assert.doesNotMatch(supervisor, /stun\.l\.google\.com/);
 for (const required of [
   "--read-only",

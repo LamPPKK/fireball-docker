@@ -47,7 +47,7 @@ export function pipelineArguments(configuration) {
     "leaky=downstream",
     "max-size-buffers=2",
     "!",
-    "gldownload",
+    "video/x-raw,format=BGRA",
     "!",
     "videoconvert",
     "!",
@@ -285,6 +285,7 @@ async function main() {
   const safeEnvironment = childEnvironment(process.env);
   delete process.env.FIREBALL_INTERNAL_SIGNALING_SECRET;
   mkdirSync("/run/fireball-session/home", { recursive: true, mode: 0o700 });
+  mkdirSync("/run/fireball-session/runtime", { recursive: true, mode: 0o700 });
   preflight();
 
   const pipeline = spawn("gst-launch-1.0", pipelineArguments(configuration), {
