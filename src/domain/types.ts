@@ -42,10 +42,13 @@ export interface SessionView {
   readonly failure?: string;
 }
 
-export interface CreateSessionResult {
-  readonly session: SessionView;
+export interface SignalingTicketIssueResult {
   readonly signalingTicket: string;
   readonly ticketExpiresInSeconds: number;
+}
+
+export interface CreateSessionResult extends SignalingTicketIssueResult {
+  readonly session: SessionView;
 }
 
 export interface SignalingTokenExchangeResult {

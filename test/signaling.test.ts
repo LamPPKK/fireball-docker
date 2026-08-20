@@ -45,6 +45,39 @@ test("pairing ticket exchanges once for a one-use signaling token", async (conte
   );
 });
 
+test("tenant owner rotates reconnect credentials without recreating the session", async (context) => {
+  const runtime = new InMemoryRuntime();
+  const sessions = new SessionService(runtime);
+  const app = buildApp({ authenticator: new DevelopmentAuthenticator("test"), sessions });
+  context.after(() => app.close());
+  const tenant = { tenantId: "alpha", subject: "alice" };
+  const created = await sessions.create(tenant);
+  const pending = sessions.exchangeSignalingTicket(created.signalingTicket);
+
+  const response = await app.inject({
+    method: "POST",
+    url: `/orchestrator/v1/sessions/${created.session.id}/signaling/tickets`,
+    headers: { authorization: "Bearer dev:alpha:alice" },
+  });
+  assert.equal(response.statusCode, 201, response.body);
+  const rotated = response.json();
+  assert.match(rotated.signalingTicket, /^[A-Za-z0-9_-]{43}$/);
+  assert.notEqual(rotated.signalingTicket, created.signalingTicket);
+  assert.equal(rotated.ticketExpiresInSeconds, 60);
+  assert.equal(runtime.resources.size, 1);
+
+  assert.throws(
+    () => sessions.exchangeSignalingTicket(created.signalingTicket),
+    isInvalidSignalingCredential,
+  );
+  assert.throws(
+    () => sessions.authorizeSignalingToken(pending.signalingToken),
+    isInvalidSignalingCredential,
+  );
+  const exchanged = sessions.exchangeSignalingTicket(rotated.signalingTicket);
+  assert.equal(sessions.authorizeSignalingToken(exchanged.signalingToken).sessionId, created.session.id);
+});
+
 test("ticket expiry and burn revoke every signaling credential", async () => {
   let now = 1_000;
   const sessions = new SessionService(new InMemoryRuntime(), {
@@ -76,6 +109,10 @@ test("failed burn remains observable while credentials stay revoked", async () =
   assert.equal(sessions.get(context, created.session.id).phase, "failed");
   assert.equal(sessions.get(context, created.session.id).failure, "runtime cleanup failed");
   assert.throws(() => sessions.authorizeSignalingToken(exchanged.signalingToken), isInvalidSignalingCredential);
+  assert.throws(
+    () => sessions.issueSignalingTicket(context, created.session.id),
+    (error: unknown) => error instanceof OrchestratorError && error.code === "SIGNALING_UNAVAILABLE",
+  );
 });
 
 function isInvalidSignalingCredential(error: unknown): boolean {

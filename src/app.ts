@@ -67,6 +67,16 @@ export function buildApp(dependencies: AppDependencies): FastifyInstance {
       },
     );
 
+    routes.post<{ Params: { id: string } }>(
+      "/orchestrator/v1/sessions/:id/signaling/tickets",
+      { schema: { params: sessionIdSchema } },
+      async (request, reply) => {
+        const context = await dependencies.authenticator.authenticate(request.headers);
+        const ticket = dependencies.sessions.issueSignalingTicket(context, request.params.id);
+        return reply.code(201).send(ticket);
+      },
+    );
+
     routes.delete<{ Params: { id: string } }>(
       "/orchestrator/v1/sessions/:id",
       { schema: { params: sessionIdSchema } },

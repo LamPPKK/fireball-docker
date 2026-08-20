@@ -8,6 +8,7 @@ import type {
   SessionRecord,
   SessionView,
   SignalingAuthorization,
+  SignalingTicketIssueResult,
   SignalingTokenExchangeResult,
   TenantContext,
 } from "./types.js";
@@ -86,7 +87,6 @@ export class SessionService {
 
   public async create(context: TenantContext): Promise<CreateSessionResult> {
     const id = randomUUID();
-    const signalingTicket = randomBytes(32).toString("base64url");
     this.reserve(id, context.tenantId);
     try {
       const runtime = await this.runtime.create({ sessionId: id, tenantId: context.tenantId, quota: this.quota });
@@ -99,20 +99,15 @@ export class SessionService {
         runtime,
       };
       const sessionKey = this.key(context.tenantId, id);
-      const ticketHash = hashCredential(signalingTicket);
       this.sessions.set(sessionKey, record);
-      this.pairingTickets.set(ticketHash, {
-        sessionKey,
-        expiresAt: this.now() + this.pairingTicketTTLSeconds * 1_000,
-      });
       this.credentialsBySession.set(sessionKey, {
-        pairingTicketHash: ticketHash,
+        pairingTicketHash: null,
         signalingTokenHashes: new Set<string>(),
       });
+      const ticket = this.rotateSignalingTicket(sessionKey);
       return {
         session: toSessionView(record),
-        signalingTicket,
-        ticketExpiresInSeconds: this.pairingTicketTTLSeconds,
+        ...ticket,
       };
     } finally {
       this.reservations.delete(id);
@@ -123,6 +118,16 @@ export class SessionService {
     const record = this.sessions.get(this.key(context.tenantId, id));
     if (!record) throw new OrchestratorError("SESSION_NOT_FOUND", "session not found", 404);
     return toSessionView(record);
+  }
+
+  public issueSignalingTicket(context: TenantContext, id: string): SignalingTicketIssueResult {
+    const sessionKey = this.key(context.tenantId, id);
+    const record = this.sessions.get(sessionKey);
+    if (!record) throw new OrchestratorError("SESSION_NOT_FOUND", "session not found", 404);
+    if (record.phase !== "active") {
+      throw new OrchestratorError("SIGNALING_UNAVAILABLE", "session is not active", 409);
+    }
+    return this.rotateSignalingTicket(sessionKey);
   }
 
   public exchangeSignalingTicket(ticket: string): SignalingTokenExchangeResult {
@@ -233,6 +238,25 @@ export class SessionService {
     if (credentials.pairingTicketHash) this.pairingTickets.delete(credentials.pairingTicketHash);
     for (const tokenHash of credentials.signalingTokenHashes) this.signalingTokens.delete(tokenHash);
     this.credentialsBySession.delete(sessionKey);
+  }
+
+  private rotateSignalingTicket(sessionKey: string): SignalingTicketIssueResult {
+    const credentials = this.credentialsBySession.get(sessionKey);
+    if (!credentials) {
+      throw new OrchestratorError("SIGNALING_UNAVAILABLE", "session credentials are unavailable", 409);
+    }
+    if (credentials.pairingTicketHash) this.pairingTickets.delete(credentials.pairingTicketHash);
+    for (const tokenHash of credentials.signalingTokenHashes) this.signalingTokens.delete(tokenHash);
+    credentials.signalingTokenHashes.clear();
+
+    const signalingTicket = randomBytes(32).toString("base64url");
+    const ticketHash = hashCredential(signalingTicket);
+    credentials.pairingTicketHash = ticketHash;
+    this.pairingTickets.set(ticketHash, {
+      sessionKey,
+      expiresAt: this.now() + this.pairingTicketTTLSeconds * 1_000,
+    });
+    return { signalingTicket, ticketExpiresInSeconds: this.pairingTicketTTLSeconds };
   }
 }
 

@@ -58,6 +58,14 @@ test("tenant identity comes from verified context and blocks cross-tenant access
     headers: authorization("beta", "bob"),
   });
   assert.equal(burn.statusCode, 404);
+
+  const reconnect = await app.inject({
+    method: "POST",
+    url: `/orchestrator/v1/sessions/${alpha.session.id}/signaling/tickets`,
+    headers: authorization("beta", "bob"),
+  });
+  assert.equal(reconnect.statusCode, 404);
+  assert.equal(reconnect.json().error.code, "SESSION_NOT_FOUND");
   assert.equal(runtime.resources.size, 1);
 });
 

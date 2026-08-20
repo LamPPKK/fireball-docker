@@ -28,11 +28,12 @@ Container isolation is defense-in-depth, not a guarantee against every container
 | `GET` | `/healthz` | none | Process health only. |
 | `POST` | `/orchestrator/v1/sessions` | Bearer JWT or development token | Create one tenant-bound session and pairing ticket. |
 | `GET` | `/orchestrator/v1/sessions/:id` | Bearer JWT or development token | Read a session owned by the authenticated tenant. |
+| `POST` | `/orchestrator/v1/sessions/:id/signaling/tickets` | Bearer JWT or development token | Rotate pending signaling credentials and issue a reconnect ticket. |
 | `DELETE` | `/orchestrator/v1/sessions/:id` | Bearer JWT or development token | Revoke credentials and burn the tenant session. |
 | `POST` | `/orchestrator/v1/signaling/tickets/exchange` | One-time pairing ticket in JSON body | Exchange for a 30-second, one-use signaling token. |
 | `GET` (WebSocket) | `/orchestrator/v1/signaling` | Exact allowed `Origin`, then one-use token | Relay signaling frames to the session runtime. |
 
-Tickets and tokens are never accepted in query strings. After the WebSocket upgrade, the first text frame must be `{"type":"authenticate","token":"<token>"}`. The gateway replies with `{"type":"ready","sessionId":"<uuid>"}` only after the runtime has accepted its distinct bootstrap secret. Additional client frames sent before `ready` close the relay. Inside the container, the orchestrator's bootstrap frame is consumed at port `8444`; it is never forwarded to rswebrtc on loopback port `8443`.
+Tickets and tokens are never accepted in query strings. A reconnect ticket can only be issued by the authenticated tenant owner; issuing one invalidates every older unexchanged ticket and unused signaling token for that session. After the WebSocket upgrade, the first text frame must be `{"type":"authenticate","token":"<token>"}`. The gateway replies with `{"type":"ready","sessionId":"<uuid>"}` only after the runtime has accepted its distinct bootstrap secret. Additional client frames sent before `ready` close the relay. Inside the container, the orchestrator's bootstrap frame is consumed at port `8444`; it is never forwarded to rswebrtc on loopback port `8443`.
 
 ## Session image candidate
 
