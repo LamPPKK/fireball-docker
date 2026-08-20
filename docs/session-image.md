@@ -4,6 +4,8 @@
 
 The `0.1.0-dev.1` session image is an E1 engineering candidate. Its source contract, bootstrap boundary, and Docker lifecycle are implemented and tested. It is not a release until both architecture builds, end-to-end media/control tests, and the tenant-isolation gate pass against the same immutable digest.
 
+The latest AMD64 runtime evidence is still **NO-GO**. Workflow run `32398205717` at commit `d3f5d89` proved that Docker applied `apparmor=fireball-session` and emitted no AppArmor denial, but WPE's bubblewrap process was still denied while creating its nested namespace under Docker's default seccomp profile. ARM64 was intentionally canceled after the AMD64 failure. No relaxed seccomp profile has been accepted or committed, and the WebKit sandbox remains enabled.
+
 ## Provenance
 
 - Base: Debian Trixie slim OCI index pinned by digest in `session/image-manifest.json`.
@@ -32,7 +34,7 @@ The supervisor removes the bootstrap secret from the GStreamer child environment
 
 - UID/GID `10001` runs the supervisor, WPE WebKit children, and GStreamer pipeline.
 - The root filesystem is read-only and all capabilities are dropped with `no-new-privileges`.
-- Ubuntu 24.04 hosts load the named `fireball-session` AppArmor profile, whose sole purpose is to permit the unprivileged user namespace required by WebKit's bubblewrap child-process sandbox. The image does not disable that sandbox or request an unconfined seccomp profile.
+- Ubuntu 24.04 hosts load the named `fireball-session` AppArmor profile, whose sole purpose is to permit the unprivileged user namespace required by WebKit's bubblewrap child-process sandbox. This addresses the host AppArmor boundary only; Docker's default seccomp policy still blocks the current runtime candidate. The image does not disable the WebKit sandbox or request an unconfined seccomp profile.
 - Cookie, cache, configuration, GStreamer registry, and runtime state are rooted below `/run/fireball-session`.
 - The portable Docker profile negotiates WPE's system-memory BGRA output before color conversion, avoiding a mandatory EGL/GPU dependency. Hardware/zero-copy profiles remain benchmark-gated deployment variants.
 - Docker mounts that path as a `256 MiB` tmpfs owned by UID/GID `10001`, with `noexec`, `nosuid`, and `nodev`.
