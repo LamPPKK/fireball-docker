@@ -1,0 +1,17 @@
+{
+  "name": "@fireball/session-runtime",
+  "version": "0.1.0-dev.1",
+  "private": true,
+  "description": "Fail-closed WPE WebKit session supervisor and signaling boundary",
+  "type": "module",
+  "engines": {
+    "node": ">=20 <27"
+  },
+  "scripts": {
+    "check": "node --check supervisor.mjs && node --check healthcheck.mjs && node --test test/*.test.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "ws": "8.21.3"
+  }
+}

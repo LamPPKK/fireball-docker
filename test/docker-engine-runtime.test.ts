@@ -52,6 +52,7 @@ test("Docker runtime applies the tenant isolation contract", async () => {
   assert.equal(body.HostConfig.PidsLimit, 128);
   assert.equal(body.HostConfig.NetworkMode, `fireball-net-${request.sessionId}`);
   assert.match(body.HostConfig.Tmpfs["/run/fireball-session"] ?? "", /noexec,nosuid,nodev/);
+  assert.match(body.HostConfig.Tmpfs["/run/fireball-session"] ?? "", /uid=10001,gid=10001/);
   assert.deepEqual(body.ExposedPorts, { "8444/tcp": {} });
   assert.deepEqual(body.HostConfig.PortBindings["8444/tcp"], [{ HostIp: "127.0.0.1", HostPort: "" }]);
   assert.match(resource.signalingSecret, /^[A-Za-z0-9_-]{43}$/);
@@ -88,12 +89,52 @@ test("Docker runtime removes both container and network when start fails", async
   assert.deepEqual(transport.calls[4]?.acceptedStatusCodes, [204, 404]);
 });
 
+test("Docker runtime waits for a healthy session image before exposing the session", async () => {
+  const transport = new RecordingTransport([
+    {},
+    { Id: "container-1" },
+    {},
+    signalingInspect("49152", "starting"),
+    signalingInspect("49152", "healthy"),
+  ]);
+  const runtime = makeRuntime(transport);
+
+  const resource = await runtime.create(request);
+
+  assert.equal(resource.signalingEndpoint, "ws://127.0.0.1:49152/internal/v1/signaling");
+  assert.equal(transport.calls.filter((call) => call.method === "GET").length, 2);
+});
+
+test("Docker runtime rolls back an unhealthy session image", async () => {
+  const transport = new RecordingTransport([
+    {},
+    { Id: "container-1" },
+    {},
+    signalingInspect("49152", "unhealthy"),
+    {},
+    {},
+  ]);
+  const runtime = makeRuntime(transport);
+
+  await assert.rejects(
+    runtime.create(request),
+    (error: unknown) => error instanceof OrchestratorError
+      && error.code === "RUNTIME_FAILURE"
+      && error.message.includes("health check"),
+  );
+  assert.deepEqual(
+    transport.calls.slice(-2).map((call) => call.method),
+    ["DELETE", "DELETE"],
+  );
+});
+
 test("Docker runtime rolls back when signaling is not published on loopback", async () => {
   const transport = new RecordingTransport([
     {},
     { Id: "container-1" },
     {},
     {
+      State: { Health: { Status: "healthy" } },
       NetworkSettings: {
         Ports: { "8444/tcp": [{ HostIp: "0.0.0.0", HostPort: "49152" }] },
       },
@@ -218,6 +259,8 @@ function makeRuntime(transport: DockerEngineTransport): DockerEngineRuntime {
       apiVersion: "1.47",
       image: "fireball/session-wpe:test",
       instanceId: "test-instance",
+      startupHealthAttempts: 3,
+      startupHealthIntervalMs: 1,
     },
     transport,
   );
@@ -250,8 +293,9 @@ function ownershipFilter(instanceId: string): string {
   }));
 }
 
-function signalingInspect(hostPort: string): unknown {
+function signalingInspect(hostPort: string, healthStatus = "healthy"): unknown {
   return {
+    State: { Health: { Status: healthStatus } },
     NetworkSettings: {
       Ports: { "8444/tcp": [{ HostIp: "127.0.0.1", HostPort: hostPort }] },
     },

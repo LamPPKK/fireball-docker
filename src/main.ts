@@ -22,10 +22,12 @@ if (environment !== "development" && environment !== "production") {
 const runtime = new DockerEngineRuntime({
   socketPath: process.env.DOCKER_SOCKET ?? "/var/run/docker.sock",
   apiVersion: process.env.DOCKER_API_VERSION ?? "1.47",
-  image: process.env.FIREBALL_SESSION_IMAGE ?? "fireball/session-wpe:0.1.0-dev.1",
+  image: sessionImage(environment),
   instanceId: environment === "production"
     ? requiredEnvironment("FIREBALL_INSTANCE_ID")
     : process.env.FIREBALL_INSTANCE_ID ?? "development",
+  startupHealthAttempts: positiveEnvironment("FIREBALL_SESSION_HEALTH_ATTEMPTS", 60),
+  startupHealthIntervalMs: positiveEnvironment("FIREBALL_SESSION_HEALTH_INTERVAL_MS", 1_000),
 });
 const signalingConnections = new SignalingConnectionRegistry();
 const sessions = new SessionService(runtime, {
@@ -77,6 +79,16 @@ function positiveEnvironment(name: string, fallback: number): number {
   const value = Number(raw);
   if (!Number.isSafeInteger(value)) throw new Error(`${name} is outside the safe integer range`);
   return value;
+}
+
+function sessionImage(nodeEnvironment: string): string {
+  const image = nodeEnvironment === "production"
+    ? requiredEnvironment("FIREBALL_SESSION_IMAGE")
+    : process.env.FIREBALL_SESSION_IMAGE ?? "fireball/session-wpe:0.1.0-dev.1";
+  if (nodeEnvironment === "production" && !/@sha256:[a-f0-9]{64}$/.test(image)) {
+    throw new Error("FIREBALL_SESSION_IMAGE must use an immutable sha256 digest in production");
+  }
+  return image;
 }
 
 function parseSignalingOrigins(nodeEnvironment: string): ReadonlySet<string> {

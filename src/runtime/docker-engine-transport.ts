@@ -19,6 +19,11 @@ export interface DockerNetworkSummary {
 }
 
 export interface DockerContainerInspectResponse {
+  readonly State?: {
+    readonly Health?: {
+      readonly Status?: string;
+    };
+  };
   readonly NetworkSettings?: {
     readonly Ports?: Record<string, ReadonlyArray<{
       readonly HostIp?: string;

@@ -17,6 +17,8 @@ export interface DockerEngineOptions {
   readonly apiVersion: string;
   readonly image: string;
   readonly instanceId: string;
+  readonly startupHealthAttempts?: number;
+  readonly startupHealthIntervalMs?: number;
 }
 
 const INTERNAL_SIGNALING_PORT = "8444/tcp";
@@ -24,6 +26,8 @@ const SIGNALING_HOST = "127.0.0.1";
 
 export class DockerEngineRuntime implements RuntimeAdapter {
   private readonly transport: DockerEngineTransport;
+  private readonly startupHealthAttempts: number;
+  private readonly startupHealthIntervalMs: number;
 
   public constructor(
     private readonly options: DockerEngineOptions,
@@ -32,6 +36,11 @@ export class DockerEngineRuntime implements RuntimeAdapter {
     if (!/^\d+\.\d+$/.test(options.apiVersion)) throw new Error("Docker API version must be numeric");
     if (!options.image.trim() || options.image.length > 255) throw new Error("session image must be non-empty");
     if (!isSafeLabelValue(options.instanceId)) throw new Error("orchestrator instance id is invalid");
+    this.startupHealthAttempts = positiveInteger(options.startupHealthAttempts ?? 60, "startup health attempts");
+    this.startupHealthIntervalMs = positiveInteger(
+      options.startupHealthIntervalMs ?? 1_000,
+      "startup health interval",
+    );
     this.transport = transport ?? new UnixSocketDockerEngineTransport(options.socketPath);
   }
 
@@ -69,7 +78,9 @@ export class DockerEngineRuntime implements RuntimeAdapter {
             ReadonlyRootfs: true,
             CapDrop: ["ALL"],
             SecurityOpt: ["no-new-privileges:true"],
-            Tmpfs: { "/run/fireball-session": "rw,noexec,nosuid,nodev,size=256m,mode=0700" },
+            Tmpfs: {
+              "/run/fireball-session": "rw,noexec,nosuid,nodev,size=256m,mode=0700,uid=10001,gid=10001",
+            },
             PortBindings: {
               [INTERNAL_SIGNALING_PORT]: [{ HostIp: "127.0.0.1", HostPort: "" }],
             },
@@ -80,11 +91,7 @@ export class DockerEngineRuntime implements RuntimeAdapter {
       if (!response.Id) throw new Error("Docker did not return a container id");
       containerId = response.Id;
       await this.call("POST", `/v${this.options.apiVersion}/containers/${containerId}/start`, [204]);
-      const inspect = await this.call<DockerContainerInspectResponse>(
-        "GET",
-        `/v${this.options.apiVersion}/containers/${encodeURIComponent(containerId)}/json`,
-        [200],
-      );
+      const inspect = await this.waitForHealthy(containerId);
       const signalingPort = publishedSignalingPort(inspect);
       return {
         containerId,
@@ -185,6 +192,25 @@ export class DockerEngineRuntime implements RuntimeAdapter {
     return response;
   }
 
+  private async waitForHealthy(containerId: string): Promise<DockerContainerInspectResponse> {
+    for (let attempt = 1; attempt <= this.startupHealthAttempts; attempt += 1) {
+      const inspect = await this.call<DockerContainerInspectResponse>(
+        "GET",
+        `/v${this.options.apiVersion}/containers/${encodeURIComponent(containerId)}/json`,
+        [200],
+      );
+      const status = inspect.State?.Health?.Status;
+      if (status === "healthy") return inspect;
+      if (status !== "starting") {
+        throw new Error(status === "unhealthy"
+          ? "session container failed its startup health check"
+          : "session image does not expose a Docker health check");
+      }
+      if (attempt < this.startupHealthAttempts) await delay(this.startupHealthIntervalMs);
+    }
+    throw new Error("session container startup health check timed out");
+  }
+
   private async listManagedNetworks(): Promise<readonly unknown[]> {
     const response = await this.call<unknown>(
       "GET",
@@ -248,6 +274,15 @@ function managedResourceId(
 
 function isSafeLabelValue(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value);
+}
+
+function positiveInteger(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
+  return value;
+}
+
+async function delay(milliseconds: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function publishedSignalingPort(inspect: DockerContainerInspectResponse): number {

@@ -1,6 +1,6 @@
 {
   "name": "@fireball/docker-orchestrator",
-  "version": "0.1.0-dev.4",
+  "version": "0.1.0-dev.5",
   "private": true,
   "description": "Multi-tenant Fireball remote-browser orchestrator foundation",
   "type": "module",
@@ -9,10 +9,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "npm run contracts:check && npm run build && npm test",
+    "check": "npm run contracts:check && npm run session:image:check && npm run session:check && npm run build && npm test",
     "contracts:generate": "node scripts/sync-xanhtab-contract.mjs",
     "contracts:check": "node scripts/check-xanhtab-contract.mjs",
     "dev": "node --enable-source-maps dist/src/main.js",
+    "session:check": "npm run check --prefix session",
+    "session:image:check": "node scripts/check-session-image.mjs",
     "test": "node --test dist/test/*.test.js"
   },
   "dependencies": {

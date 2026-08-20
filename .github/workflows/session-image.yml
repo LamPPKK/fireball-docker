@@ -1,0 +1,46 @@
+name: session-image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    name: ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            suffix: amd64
+          - platform: linux/arm64
+            suffix: arm64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: session/Dockerfile
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: fireball/session-wpe:test-${{ matrix.suffix }}
+          cache-from: type=gha,scope=session-image-${{ matrix.suffix }}
+          cache-to: type=gha,mode=max,scope=session-image-${{ matrix.suffix }}
+      - name: Inspect WPE and rswebrtc plugins
+        run: |
+          docker run --rm --platform "${{ matrix.platform }}" --entrypoint gst-inspect-1.0 "fireball/session-wpe:test-${{ matrix.suffix }}" wpesrc
+          docker run --rm --platform "${{ matrix.platform }}" --entrypoint gst-inspect-1.0 "fireball/session-wpe:test-${{ matrix.suffix }}" webrtcsink
+          docker run --rm --platform "${{ matrix.platform }}" --entrypoint gst-inspect-1.0 "fireball/session-wpe:test-${{ matrix.suffix }}" openh264enc
+      - name: Inspect runtime metadata
+        run: |
+          test "$(docker image inspect --format '{{.Config.User}}' "fireball/session-wpe:test-${{ matrix.suffix }}")" = "10001:10001"
+          docker run --rm --platform "${{ matrix.platform }}" --entrypoint /usr/bin/node "fireball/session-wpe:test-${{ matrix.suffix }}" --check /opt/fireball-session/supervisor.mjs
+          docker run --rm --platform "${{ matrix.platform }}" --entrypoint cat "fireball/session-wpe:test-${{ matrix.suffix }}" /usr/share/fireball-session/component-versions.txt
