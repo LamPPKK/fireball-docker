@@ -7,6 +7,7 @@ import WebSocket from "ws";
 const image = process.argv[2];
 const platform = process.argv[3];
 const appArmorProfile = process.env.FIREBALL_SMOKE_APPARMOR_PROFILE;
+const iceServersFile = process.env.FIREBALL_SMOKE_ICE_SERVERS_FILE;
 
 if (typeof image !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/@:-]{0,254}$/.test(image)) {
   throw new Error("usage: node container-smoke.mjs <image> [linux/amd64|linux/arm64]");
@@ -16,6 +17,9 @@ if (platform !== undefined && !["linux/amd64", "linux/arm64"].includes(platform)
 }
 if (appArmorProfile !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(appArmorProfile)) {
   throw new Error("FIREBALL_SMOKE_APPARMOR_PROFILE is invalid");
+}
+if (iceServersFile !== undefined && !/^\/[A-Za-z0-9._/-]+$/.test(iceServersFile)) {
+  throw new Error("FIREBALL_SMOKE_ICE_SERVERS_FILE is invalid");
 }
 
 const suffix = randomBytes(6).toString("hex");
@@ -27,6 +31,14 @@ try {
   const platformArguments = platform ? ["--platform", platform] : [];
   const appArmorArguments = appArmorProfile
     ? ["--security-opt", `apparmor=${appArmorProfile}`]
+    : [];
+  const iceServerArguments = iceServersFile
+    ? [
+      "--mount",
+      `type=bind,source=${iceServersFile},target=/run/fireball-secrets/ice-servers.json,readonly`,
+      "--env",
+      "FIREBALL_ICE_SERVERS_FILE=/run/fireball-secrets/ice-servers.json",
+    ]
     : [];
   docker([
     "run",
@@ -46,6 +58,7 @@ try {
     "127.0.0.1::8444",
     "--env",
     `FIREBALL_INTERNAL_SIGNALING_SECRET=${secret}`,
+    ...iceServerArguments,
     image,
   ]);
   containerCreated = true;

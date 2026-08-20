@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "stun_server": {
+    "host": "turn.example.com",
+    "port": 3478
+  },
+  "turn_servers": [
+    {
+      "scheme": "turns",
+      "host": "turn.example.com",
+      "port": 5349,
+      "username": "TURN_USER",
+      "password": "TURN_PASSWORD"
+    }
+  ],
+  "ice_transport_policy": "relay"
+}

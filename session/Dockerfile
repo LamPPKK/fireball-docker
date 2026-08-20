@@ -65,7 +65,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 fireball-session \
     && useradd --system --uid 10001 --gid 10001 --home-dir /run/fireball-session/home fireball-session \
-    && install -d -o 10001 -g 10001 -m 0755 /run/fireball-session /usr/lib/fireball/gstreamer-1.0 /usr/share/fireball-session /opt/fireball-session/node_modules
+    && install -d -o 10001 -g 10001 -m 0755 /run/fireball-session /usr/lib/fireball/gstreamer-1.0 /usr/share/fireball-session /opt/fireball-session/node_modules \
+    && install -d -o root -g 10001 -m 0750 /run/fireball-secrets
 
 COPY --from=rswebrtc-builder /opt/fireball/lib/gstreamer-1.0/libgstrswebrtc.so /usr/lib/fireball/gstreamer-1.0/libgstrswebrtc.so
 COPY --from=rswebrtc-builder /src/gst-plugins-rs/net/webrtc/LICENSE-MPL-2.0 /usr/share/fireball-session/LICENSE-rswebrtc-MPL-2.0

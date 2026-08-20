@@ -1,6 +1,14 @@
 import { spawn, spawnSync } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+} from "node:fs";
+import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 
 import WebSocket, { WebSocketServer } from "ws";
@@ -8,14 +16,16 @@ import WebSocket, { WebSocketServer } from "ws";
 const AUTHENTICATION_TIMEOUT_MS = 5_000;
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 const MAX_BUFFERED_BYTES = 1024 * 1024;
+const MAX_ICE_CONFIGURATION_BYTES = 16 * 1024;
 const INTERNAL_HOME = "file:///usr/share/fireball-session/home.html";
+const ICE_CONFIGURATION_PATH = "/run/fireball-secrets/ice-servers.json";
 const PROFILE_CONFIGURATION = Object.freeze({
   "1080p30": Object.freeze({ width: 1920, height: 1080, fps: 30, bitrate: 6_000_000 }),
   "720p15": Object.freeze({ width: 1280, height: 720, fps: 15, bitrate: 3_000_000 }),
   "480p10": Object.freeze({ width: 854, height: 480, fps: 10, bitrate: 1_200_000 }),
 });
 
-export function parseConfiguration(environment) {
+export function parseConfiguration(environment, iceConfigurationLoader = loadIceServerConfiguration) {
   const secret = environment.FIREBALL_INTERNAL_SIGNALING_SECRET;
   if (typeof secret !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(secret)) {
     throw new Error("FIREBALL_INTERNAL_SIGNALING_SECRET must contain 256 bits in base64url form");
@@ -26,16 +36,97 @@ export function parseConfiguration(environment) {
   if (!profile) throw new Error("FIREBALL_STREAM_PROFILE is unsupported");
 
   const startUrl = validateStartUrl(environment.FIREBALL_START_URL ?? INTERNAL_HOME);
-  return Object.freeze({ secret, profileName, profile, startUrl });
+  const ice = environment.FIREBALL_ICE_SERVERS_FILE === undefined
+    ? Object.freeze({ stunServer: "", turnServers: Object.freeze([]), iceTransportPolicy: "all" })
+    : iceConfigurationLoader(validateIceConfigurationPath(environment.FIREBALL_ICE_SERVERS_FILE));
+  return Object.freeze({ secret, profileName, profile, startUrl, ice });
 }
 
 export function childEnvironment(environment) {
-  const { FIREBALL_INTERNAL_SIGNALING_SECRET: _secret, ...safeEnvironment } = environment;
+  const {
+    FIREBALL_INTERNAL_SIGNALING_SECRET: _secret,
+    FIREBALL_ICE_SERVERS_FILE: _iceServersFile,
+    ...safeEnvironment
+  } = environment;
   return safeEnvironment;
+}
+
+export function parseIceServerConfiguration(source) {
+  let parsed;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    throw new Error("ICE server configuration must be valid JSON");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("ICE server configuration must be an object");
+  }
+  const keys = Object.keys(parsed).sort();
+  const expectedKeys = parsed.stun_server === undefined
+    ? ["ice_transport_policy", "schema_version", "turn_servers"]
+    : ["ice_transport_policy", "schema_version", "stun_server", "turn_servers"];
+  if (keys.join(",") !== expectedKeys.sort().join(",")) {
+    throw new Error("ICE server configuration contains unsupported fields");
+  }
+  if (parsed.schema_version !== 1) {
+    throw new Error("ICE server configuration schema_version must be 1");
+  }
+  if (!Array.isArray(parsed.turn_servers) || parsed.turn_servers.length < 1 || parsed.turn_servers.length > 4) {
+    throw new Error("ICE server configuration must contain one to four TURN servers");
+  }
+  const turnServers = parsed.turn_servers.map((value) => validateTurnServer(value));
+  if (new Set(turnServers).size !== turnServers.length) {
+    throw new Error("ICE server configuration TURN servers must be unique");
+  }
+  const stunServer = parsed.stun_server === undefined
+    ? ""
+    : validateStunServer(parsed.stun_server);
+  if (!(["all", "relay"].includes(parsed.ice_transport_policy))) {
+    throw new Error("ICE transport policy must be all or relay");
+  }
+  return Object.freeze({
+    stunServer,
+    turnServers: Object.freeze(turnServers),
+    iceTransportPolicy: parsed.ice_transport_policy,
+  });
+}
+
+export function validateIceServerFileMetadata(metadata) {
+  if (!metadata.isFile) throw new Error("ICE server configuration must be a regular file");
+  if (metadata.size < 2 || metadata.size > MAX_ICE_CONFIGURATION_BYTES) {
+    throw new Error("ICE server configuration has an unsafe size");
+  }
+  if (metadata.uid !== 0 || metadata.gid !== 10001 || (metadata.mode & 0o777) !== 0o440) {
+    throw new Error("ICE server configuration must be owned by root:10001 with mode 0440");
+  }
+}
+
+export function loadIceServerConfiguration(filePath) {
+  const descriptor = openSync(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const metadata = fstatSync(descriptor);
+    validateIceServerFileMetadata({
+      isFile: metadata.isFile(),
+      size: metadata.size,
+      uid: metadata.uid,
+      gid: metadata.gid,
+      mode: metadata.mode,
+    });
+    return parseIceServerConfiguration(readFileSync(descriptor, "utf8"));
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 export function pipelineArguments(configuration) {
   const { width, height, fps, bitrate } = configuration.profile;
+  const iceArguments = [
+    `stun-server=${configuration.ice.stunServer}`,
+    ...(configuration.ice.turnServers.length === 0
+      ? []
+      : [`turn-servers=<${configuration.ice.turnServers.map((server) => `"${server}"`).join(",")}>`]),
+    `ice-transport-policy=${configuration.ice.iceTransportPolicy}`,
+  ];
   return [
     "-e",
     "wpesrc",
@@ -78,7 +169,7 @@ export function pipelineArguments(configuration) {
     "signalling-server-host=127.0.0.1",
     "signalling-server-port=8443",
     "run-web-server=false",
-    "stun-server=",
+    ...iceArguments,
     "meta=meta,name=fireball-session",
     "web.audio_0",
     "!",
@@ -95,6 +186,79 @@ export function pipelineArguments(configuration) {
     "!",
     "rtc.",
   ];
+}
+
+function validateIceConfigurationPath(value) {
+  if (value !== ICE_CONFIGURATION_PATH) {
+    throw new Error(`FIREBALL_ICE_SERVERS_FILE must be ${ICE_CONFIGURATION_PATH}`);
+  }
+  return value;
+}
+
+function validateStunServer(value) {
+  assertObjectWithExactKeys(value, ["host", "port"], "STUN server");
+  return `stun://${serializeIceHost(validateIceHost(value.host))}:${validateIcePort(value.port)}`;
+}
+
+function validateTurnServer(value) {
+  assertObjectWithExactKeys(value, ["host", "password", "port", "scheme", "username"], "TURN server");
+  if (!(value.scheme === "turn" || value.scheme === "turns")) {
+    throw new Error("TURN server scheme must be turn or turns");
+  }
+  const host = serializeIceHost(validateIceHost(value.host));
+  const port = validateIcePort(value.port);
+  const username = encodeIceCredential(value.username, "username", 128);
+  const password = encodeIceCredential(value.password, "password", 256);
+  return `${value.scheme}://${username}:${password}@${host}:${port}`;
+}
+
+function assertObjectWithExactKeys(value, keys, label) {
+  if (
+    typeof value !== "object"
+    || value === null
+    || Array.isArray(value)
+    || Object.keys(value).sort().join(",") !== [...keys].sort().join(",")
+  ) {
+    throw new Error(`${label} must contain only ${keys.join(", ")}`);
+  }
+}
+
+function validateIceHost(value) {
+  if (typeof value !== "string" || value.length < 1 || value.length > 253) {
+    throw new Error("ICE server host is invalid");
+  }
+  const addressFamily = isIP(value);
+  if (addressFamily === 4 || addressFamily === 6) {
+    if (value !== value.toLowerCase()) throw new Error("ICE server host is invalid");
+    return value;
+  }
+  if (
+    value !== value.toLowerCase()
+    || !/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/.test(value)
+  ) {
+    throw new Error("ICE server host is invalid");
+  }
+  return value;
+}
+
+function validateIcePort(value) {
+  if (!Number.isInteger(value) || value < 1 || value > 65_535) {
+    throw new Error("ICE server port must be between 1 and 65535");
+  }
+  return value;
+}
+
+function encodeIceCredential(value, label, maximumLength) {
+  if (typeof value !== "string" || value.length < 1 || value.length > maximumLength || !/^[\x21-\x7e]+$/.test(value)) {
+    throw new Error(`TURN server ${label} must contain printable ASCII without spaces`);
+  }
+  return encodeURIComponent(value).replace(/[!'()*]/g, (character) => (
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+  ));
+}
+
+function serializeIceHost(host) {
+  return isIP(host) === 6 ? `[${host}]` : host;
 }
 
 export function parseAuthenticationFrame(data, isBinary, expectedSecret) {

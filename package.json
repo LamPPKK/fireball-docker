@@ -9,10 +9,11 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "npm run contracts:check && npm run session:image:check && npm run session:check && npm run build && npm test",
+    "check": "npm run contracts:check && npm run deployment:check && npm run session:image:check && npm run session:check && npm run build && npm test",
     "contracts:generate": "node scripts/sync-xanhtab-contract.mjs",
     "contracts:check": "node scripts/check-xanhtab-contract.mjs",
     "dev": "node --enable-source-maps dist/src/main.js",
+    "deployment:check": "node --check scripts/render-nginx-config.mjs && node --check scripts/install-nginx-config.mjs && node --test test/deployment-adapters.test.mjs",
     "session:check": "npm run check --prefix session",
     "session:image:check": "node scripts/check-session-image.mjs",
     "test": "node --test dist/test/*.test.js"
@@ -26,6 +27,8 @@
   "devDependencies": {
     "@types/node": "24.13.3",
     "@types/ws": "8.18.1",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "openapi-typescript": "7.13.0",
     "typescript": "5.9.3"
   }

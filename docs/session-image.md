@@ -28,7 +28,9 @@ public controller
 
 The public one-use signaling token is consumed by the orchestrator and never reaches the container. The container receives a different 256-bit bootstrap secret through its environment. Port `8444` accepts exactly one text authentication frame, compares the secret in constant time, reserves one controller lease, and only then opens the rswebrtc hop. It enforces a 64 KiB frame limit, a 1 MiB backpressure ceiling, a five-second authentication deadline, and no per-message compression.
 
-The supervisor removes the bootstrap secret from the GStreamer child environment. The rswebrtc embedded web server and public STUN default are disabled. Port `8443` is loopback-only inside the container; Docker publishes only port `8444`, and only on host `127.0.0.1` with a random port.
+The supervisor removes the bootstrap secret and ICE file path from the GStreamer child environment. The rswebrtc embedded web server and public STUN default are disabled. Port `8443` is loopback-only inside the container; Docker publishes only port `8444`, and only on host `127.0.0.1` with a random port.
+
+An operator may configure TURN through the [deployment adapter](deployment-adapters.md). The Docker API mounts the host file read-only at `/run/fireball-secrets/ice-servers.json`; no TURN URL is placed in the image or container environment. Before starting GStreamer, the non-root supervisor checks the file size, owner, group, mode, schema, URL form, unique-server bound, and ICE policy. GStreamer receives the validated `stun-server`, `turn-servers`, and `ice-transport-policy` properties. Real TURN allocation and media/control relay remain promotion evidence, not an inferred pass from configuration tests.
 
 ## Storage and process policy
 
@@ -62,7 +64,7 @@ npm ci --prefix session --ignore-scripts
 npm run check
 ```
 
-The `session-image` GitHub workflow builds and loads each architecture independently under Buildx/QEMU, then checks `wpesrc`, `webrtcsink`, `openh264enc`, the non-root user, supervisor syntax, and embedded component versions. It also starts the image with the production read-only/capability/tmpfs restrictions, waits for Docker health, verifies loopback-only signaling, rejects a bad bootstrap secret and a second controller, and proves the controller lease can reconnect before removing the container.
+The `session-image` GitHub workflow builds and loads each architecture independently under Buildx/QEMU, then checks `wpesrc`, `webrtcsink`, `openh264enc`, the non-root user, supervisor syntax, and embedded component versions. It rejects an ICE fixture with unsafe permissions, then starts the image with a valid read-only TURN fixture plus the production read-only/capability/tmpfs restrictions. The smoke waits for Docker health, proving the pinned GStreamer build parses the TURN properties, verifies loopback-only signaling, rejects a bad bootstrap secret and a second controller, and proves the controller lease can reconnect before removing the container. It does not prove a real TURN allocation because the fixture deliberately uses the reserved `.invalid` domain.
 
 Promotion additionally requires:
 
@@ -71,3 +73,5 @@ Promotion additionally requires:
 3. Run two tenants concurrently and prove cookie, storage, process, network namespace, bootstrap secret, and signaling ticket isolation.
 4. Test read-only rootfs, tmpfs ownership, memory/PID/CPU quotas, unhealthy startup rollback, daemon restart reconciliation, and no reusable residue after burn.
 5. Promote the already-tested digest. Do not rebuild after QA.
+
+The public orchestrator should remain on host loopback behind the rendered Nginx TLS/WebSocket adapter. The adapter source is checked in normal CI, but release evidence must also include `nginx -t` and an external WebSocket handshake against the deployed version.

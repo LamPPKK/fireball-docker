@@ -5,7 +5,9 @@ import {
   childEnvironment,
   parseAuthenticationFrame,
   parseConfiguration,
+  parseIceServerConfiguration,
   pipelineArguments,
+  validateIceServerFileMetadata,
 } from "../supervisor.mjs";
 
 const secret = "A".repeat(43);
@@ -66,6 +68,119 @@ test("pipeline is one WPE source with explicit H264, Opus, control, and no publi
   assert.doesNotMatch(command, new RegExp(secret));
 });
 
+test("TURN configuration is strict and becomes explicit GStreamer ICE policy", () => {
+  const source = JSON.stringify({
+    schema_version: 1,
+    stun_server: { host: "stun.example.com", port: 3478 },
+    turn_servers: [
+      {
+        scheme: "turns",
+        host: "turn.example.com",
+        port: 5349,
+        username: "tenant:alpha",
+        password: "temporary/credential",
+      },
+      {
+        scheme: "turn",
+        host: "2001:db8::2",
+        port: 3478,
+        username: "tenant",
+        password: "credential",
+      },
+    ],
+    ice_transport_policy: "relay",
+  });
+  const configuration = parseConfiguration(
+    {
+      FIREBALL_INTERNAL_SIGNALING_SECRET: secret,
+      FIREBALL_ICE_SERVERS_FILE: "/run/fireball-secrets/ice-servers.json",
+    },
+    () => parseIceServerConfiguration(source),
+  );
+  const argumentsList = pipelineArguments(configuration);
+  assert.ok(argumentsList.includes("stun-server=stun://stun.example.com:3478"));
+  assert.ok(argumentsList.includes(
+    "turn-servers=<\"turns://tenant%3Aalpha:temporary%2Fcredential@turn.example.com:5349\",\"turn://tenant:credential@[2001:db8::2]:3478\">",
+  ));
+  assert.ok(argumentsList.includes("ice-transport-policy=relay"));
+});
+
+test("TURN configuration rejects ambiguous, credential-free, duplicate, and unsafe input", () => {
+  const valid = {
+    schema_version: 1,
+    turn_servers: [{
+      scheme: "turns",
+      host: "turn.example.com",
+      port: 5349,
+      username: "tenant",
+      password: "credential",
+    }],
+    ice_transport_policy: "all",
+  };
+  assert.throws(
+    () => parseIceServerConfiguration(JSON.stringify({ ...valid, unexpected: true })),
+    /unsupported fields/,
+  );
+  assert.throws(
+    () => parseIceServerConfiguration(JSON.stringify({
+      ...valid,
+      turn_servers: [{ ...valid.turn_servers[0], password: "" }],
+    })),
+    /password/,
+  );
+  assert.throws(
+    () => parseIceServerConfiguration(JSON.stringify({
+      ...valid,
+      turn_servers: [valid.turn_servers[0], valid.turn_servers[0]],
+    })),
+    /unique/,
+  );
+  assert.throws(
+    () => parseIceServerConfiguration(JSON.stringify({ ...valid, ice_transport_policy: "none" })),
+    /all or relay/,
+  );
+  assert.throws(
+    () => parseIceServerConfiguration(JSON.stringify({
+      ...valid,
+      stun_server: { host: "2001:db8::1", port: 70_000 },
+    })),
+    /between 1 and 65535/,
+  );
+  assert.throws(
+    () => parseIceServerConfiguration(JSON.stringify({
+      ...valid,
+      turn_servers: [{ ...valid.turn_servers[0], host: "turn.example.com/path" }],
+    })),
+    /host is invalid/,
+  );
+  assert.throws(
+    () => parseConfiguration({
+      FIREBALL_INTERNAL_SIGNALING_SECRET: secret,
+      FIREBALL_ICE_SERVERS_FILE: "/tmp/ice-servers.json",
+    }),
+    /must be \/run\/fireball-secrets/,
+  );
+});
+
+test("TURN secret file metadata is fail-closed", () => {
+  assert.doesNotThrow(() => validateIceServerFileMetadata({
+    isFile: true,
+    size: 256,
+    uid: 0,
+    gid: 10001,
+    mode: 0o100440,
+  }));
+  for (const metadata of [
+    { isFile: false, size: 256, uid: 0, gid: 10001, mode: 0o100440 },
+    { isFile: true, size: 0, uid: 0, gid: 10001, mode: 0o100440 },
+    { isFile: true, size: 256, uid: 10001, gid: 10001, mode: 0o100440 },
+    { isFile: true, size: 256, uid: 0, gid: 10001, mode: 0o100640 },
+    { isFile: true, size: 256, uid: 0, gid: 10001, mode: 0o100444 },
+  ]) {
+    assert.throws(() => validateIceServerFileMetadata(metadata), /regular file|unsafe size|root:10001/);
+  }
+});
+
 test("bootstrap authentication is exact, text-only, and constant-length", () => {
   const valid = Buffer.from(JSON.stringify({ type: "authenticate", secret }));
   assert.equal(parseAuthenticationFrame(valid, false, secret), true);
@@ -87,6 +202,7 @@ test("bootstrap authentication is exact, text-only, and constant-length", () => 
 test("bootstrap secret is removed from the GStreamer child environment", () => {
   const environment = childEnvironment({
     FIREBALL_INTERNAL_SIGNALING_SECRET: secret,
+    FIREBALL_ICE_SERVERS_FILE: "/run/fireball-secrets/ice-servers.json",
     GST_DEBUG: "2",
   });
   assert.deepEqual(environment, { GST_DEBUG: "2" });

@@ -18,6 +18,9 @@
     "storage_root": "/run/fireball-session",
     "video_codec": "H264",
     "audio_codec": "Opus",
-    "public_stun_default": false
+    "public_stun_default": false,
+    "ice_configuration_path": "/run/fireball-secrets/ice-servers.json",
+    "ice_configuration_schema_version": 1,
+    "ice_credentials_in_environment": false
   }
 }

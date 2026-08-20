@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { isAbsolute, normalize } from "node:path";
 
 import { OrchestratorError } from "../domain/errors.js";
 import type { RuntimeResource } from "../domain/types.js";
@@ -18,12 +19,14 @@ export interface DockerEngineOptions {
   readonly image: string;
   readonly instanceId: string;
   readonly appArmorProfile?: string;
+  readonly iceServersFile?: string;
   readonly startupHealthAttempts?: number;
   readonly startupHealthIntervalMs?: number;
 }
 
 const INTERNAL_SIGNALING_PORT = "8444/tcp";
 const SIGNALING_HOST = "127.0.0.1";
+const ICE_SERVERS_CONTAINER_PATH = "/run/fireball-secrets/ice-servers.json";
 
 export class DockerEngineRuntime implements RuntimeAdapter {
   private readonly transport: DockerEngineTransport;
@@ -39,6 +42,17 @@ export class DockerEngineRuntime implements RuntimeAdapter {
     if (!isSafeLabelValue(options.instanceId)) throw new Error("orchestrator instance id is invalid");
     if (options.appArmorProfile !== undefined && !isSafeSecurityProfile(options.appArmorProfile)) {
       throw new Error("session AppArmor profile is invalid");
+    }
+    if (
+      options.iceServersFile !== undefined
+      && (
+        !isAbsolute(options.iceServersFile)
+        || normalize(options.iceServersFile) !== options.iceServersFile
+        || !/^\/[A-Za-z0-9._/-]+$/.test(options.iceServersFile)
+        || options.iceServersFile.length > 4_096
+      )
+    ) {
+      throw new Error("session ICE servers file must be a safe absolute host path");
     }
     this.startupHealthAttempts = positiveInteger(options.startupHealthAttempts ?? 60, "startup health attempts");
     this.startupHealthIntervalMs = positiveInteger(
@@ -71,7 +85,12 @@ export class DockerEngineRuntime implements RuntimeAdapter {
         {
           Image: this.options.image,
           Labels: isolationLabels(input, this.options.instanceId),
-          Env: [`FIREBALL_INTERNAL_SIGNALING_SECRET=${signalingSecret}`],
+          Env: [
+            `FIREBALL_INTERNAL_SIGNALING_SECRET=${signalingSecret}`,
+            ...(this.options.iceServersFile === undefined
+              ? []
+              : [`FIREBALL_ICE_SERVERS_FILE=${ICE_SERVERS_CONTAINER_PATH}`]),
+          ],
           ExposedPorts: { [INTERNAL_SIGNALING_PORT]: {} },
           HostConfig: {
             AutoRemove: false,
@@ -90,6 +109,15 @@ export class DockerEngineRuntime implements RuntimeAdapter {
             Tmpfs: {
               "/run/fireball-session": "rw,noexec,nosuid,nodev,size=256m,mode=0700,uid=10001,gid=10001",
             },
+            Mounts: this.options.iceServersFile === undefined
+              ? []
+              : [{
+                Type: "bind",
+                Source: this.options.iceServersFile,
+                Target: ICE_SERVERS_CONTAINER_PATH,
+                ReadOnly: true,
+                BindOptions: { Propagation: "rprivate" },
+              }],
             PortBindings: {
               [INTERNAL_SIGNALING_PORT]: [{ HostIp: "127.0.0.1", HostPort: "" }],
             },

@@ -40,6 +40,13 @@ test("Docker runtime applies the tenant isolation contract", async () => {
       PidsLimit: number;
       NetworkMode: string;
       Tmpfs: Record<string, string>;
+      Mounts: Array<{
+        Type: string;
+        Source: string;
+        Target: string;
+        ReadOnly: boolean;
+        BindOptions: { Propagation: string };
+      }>;
       PortBindings: Record<string, Array<{ HostIp: string; HostPort: string }>>;
     };
   };
@@ -56,11 +63,52 @@ test("Docker runtime applies the tenant isolation contract", async () => {
   assert.equal(body.HostConfig.NetworkMode, `fireball-net-${request.sessionId}`);
   assert.match(body.HostConfig.Tmpfs["/run/fireball-session"] ?? "", /noexec,nosuid,nodev/);
   assert.match(body.HostConfig.Tmpfs["/run/fireball-session"] ?? "", /uid=10001,gid=10001/);
+  assert.deepEqual(body.HostConfig.Mounts, []);
   assert.deepEqual(body.ExposedPorts, { "8444/tcp": {} });
   assert.deepEqual(body.HostConfig.PortBindings["8444/tcp"], [{ HostIp: "127.0.0.1", HostPort: "" }]);
   assert.match(resource.signalingSecret, /^[A-Za-z0-9_-]{43}$/);
   assert.ok(body.Env.includes(`FIREBALL_INTERNAL_SIGNALING_SECRET=${resource.signalingSecret}`));
   assert.equal(resource.signalingEndpoint, "ws://127.0.0.1:49152/internal/v1/signaling");
+});
+
+test("Docker runtime bind-mounts TURN credentials read-only without exposing them in Env", async () => {
+  const transport = new RecordingTransport([{}, { Id: "container-1" }, {}, signalingInspect("49152")]);
+  const runtime = makeRuntime(transport, { iceServersFile: "/etc/fireball/ice-servers.json" });
+
+  await runtime.create(request);
+
+  const createContainer = transport.calls[1];
+  assert.ok(createContainer);
+  const body = createContainer.body as {
+    Env: string[];
+    HostConfig: { Mounts: unknown[] };
+  };
+  assert.deepEqual(body.Env.filter((entry) => entry.startsWith("FIREBALL_ICE")), [
+    "FIREBALL_ICE_SERVERS_FILE=/run/fireball-secrets/ice-servers.json",
+  ]);
+  assert.equal(body.Env.some((entry) => entry.includes("turn:") || entry.includes("turns:")), false);
+  assert.deepEqual(body.HostConfig.Mounts, [{
+    Type: "bind",
+    Source: "/etc/fireball/ice-servers.json",
+    Target: "/run/fireball-secrets/ice-servers.json",
+    ReadOnly: true,
+    BindOptions: { Propagation: "rprivate" },
+  }]);
+});
+
+test("Docker runtime rejects relative TURN secret paths", () => {
+  const transport = new RecordingTransport([]);
+  for (const iceServersFile of [
+    "secrets/ice-servers.json",
+    "/etc/fireball/../shadow",
+    "/etc/fireball/ice servers.json",
+    "/etc/fireball/ice-servers.json\n",
+  ]) {
+    assert.throws(
+      () => makeRuntime(transport, { iceServersFile }),
+      /absolute host path/,
+    );
+  }
 });
 
 test("Docker runtime removes both container and network when start fails", async () => {
@@ -255,7 +303,10 @@ test("startup reconciliation fails closed on an invalid Docker list response", a
   );
 });
 
-function makeRuntime(transport: DockerEngineTransport): DockerEngineRuntime {
+function makeRuntime(
+  transport: DockerEngineTransport,
+  overrides: { readonly iceServersFile?: string } = {},
+): DockerEngineRuntime {
   return new DockerEngineRuntime(
     {
       socketPath: "/var/run/docker.sock",
@@ -265,6 +316,7 @@ function makeRuntime(transport: DockerEngineTransport): DockerEngineRuntime {
       appArmorProfile: "fireball-session",
       startupHealthAttempts: 3,
       startupHealthIntervalMs: 1,
+      ...overrides,
     },
     transport,
   );

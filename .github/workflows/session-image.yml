@@ -52,10 +52,34 @@ jobs:
       - run: npm ci --prefix session --ignore-scripts
       - name: Load WPE user-namespace AppArmor profile
         run: sudo apparmor_parser -r deploy/apparmor/fireball-session
+      - name: Prepare TURN smoke fixtures
+        run: |
+          sudo install -o root -g 10001 -m 0440 session/test/fixtures/ice-servers.json "/tmp/fireball-ice-${{ matrix.suffix }}.json"
+          sudo install -o root -g 10001 -m 0444 session/test/fixtures/ice-servers.json "/tmp/fireball-ice-unsafe-${{ matrix.suffix }}.json"
+      - name: Reject unsafe TURN secret permissions
+        run: |
+          set +e
+          output="$(docker run --rm --platform "${{ matrix.platform }}" \
+            --read-only \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges:true \
+            --tmpfs /run/fireball-session:rw,noexec,nosuid,nodev,size=256m,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=/tmp/fireball-ice-unsafe-${{ matrix.suffix }}.json,target=/run/fireball-secrets/ice-servers.json,readonly" \
+            --env FIREBALL_INTERNAL_SIGNALING_SECRET=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
+            --env FIREBALL_ICE_SERVERS_FILE=/run/fireball-secrets/ice-servers.json \
+            "fireball/session-wpe:test-${{ matrix.suffix }}" 2>&1)"
+          status="$?"
+          set -e
+          test "$status" -ne 0
+          grep -F "must be owned by root:10001 with mode 0440" <<<"$output"
       - name: Smoke running session container
         run: npm run container:smoke --prefix session -- "fireball/session-wpe:test-${{ matrix.suffix }}" "${{ matrix.platform }}"
         env:
           FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
+          FIREBALL_SMOKE_ICE_SERVERS_FILE: /tmp/fireball-ice-${{ matrix.suffix }}.json
+      - name: Remove TURN smoke fixtures
+        if: always()
+        run: sudo rm -f "/tmp/fireball-ice-${{ matrix.suffix }}.json" "/tmp/fireball-ice-unsafe-${{ matrix.suffix }}.json"
       - name: Report kernel sandbox denials
         if: failure()
         run: sudo journalctl --dmesg --since "10 minutes ago" --no-pager | grep -E -i 'apparmor|seccomp|audit.*denied' || true

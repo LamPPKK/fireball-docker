@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "stun_server": {
+    "host": "turn.invalid",
+    "port": 3478
+  },
+  "turn_servers": [
+    {
+      "scheme": "turns",
+      "host": "turn.invalid",
+      "port": 5349,
+      "username": "smoke-user",
+      "password": "smoke-password"
+    }
+  ],
+  "ice_transport_policy": "relay"
+}

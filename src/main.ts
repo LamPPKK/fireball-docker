@@ -27,6 +27,7 @@ const runtime = new DockerEngineRuntime({
     ? requiredEnvironment("FIREBALL_INSTANCE_ID")
     : process.env.FIREBALL_INSTANCE_ID ?? "development",
   ...optionalAppArmorProfile(),
+  ...optionalIceServersFile(),
   startupHealthAttempts: positiveEnvironment("FIREBALL_SESSION_HEALTH_ATTEMPTS", 60),
   startupHealthIntervalMs: positiveEnvironment("FIREBALL_SESSION_HEALTH_INTERVAL_MS", 1_000),
 });
@@ -85,6 +86,11 @@ function positiveEnvironment(name: string, fallback: number): number {
 function optionalAppArmorProfile(): { readonly appArmorProfile?: string } {
   const value = process.env.FIREBALL_SESSION_APPARMOR_PROFILE?.trim();
   return value ? { appArmorProfile: value } : {};
+}
+
+function optionalIceServersFile(): { readonly iceServersFile?: string } {
+  const value = process.env.FIREBALL_ICE_SERVERS_FILE?.trim();
+  return value ? { iceServersFile: value } : {};
 }
 
 function sessionImage(nodeEnvironment: string): string {

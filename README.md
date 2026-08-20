@@ -13,6 +13,8 @@ Fireball's multi-tenant remote-browser orchestrator. The repository is now at th
 - Public session responses exclude tenant identity, container details, internal signaling endpoints, and bootstrap secrets.
 - The signaling gateway requires an exact allowed `Origin`, consumes the one-use token in the first frame, limits payloads and buffered bytes, and authenticates the separate runtime hop with a per-session bootstrap secret.
 - The session-image candidate uses one WPE source, explicit H.264/Opus branches, GStreamer navigation over the control DataChannel, no public STUN default, and a separate one-controller bootstrap proxy. Debian and `gst-plugins-rs` provenance are immutable inputs.
+- Optional TURN traversal is supplied through a read-only, root-owned host secret file; credentials are neither copied into the session image nor exposed in Docker environment variables. The default remains no public STUN and no TURN.
+- The checked Nginx adapter terminates TLS, forwards the exact signaling WebSocket upgrade to an orchestrator bound on loopback, and applies request/body/connection limits without storing TLS or OIDC credentials in either image.
 - Burn revokes all outstanding credentials and active or pending signaling relays before runtime cleanup. Cleanup failure remains observable as a `failed` session and can be retried.
 - Container creation is transactional: a failed start or failed Docker health check removes both the partially-created container and its network. A session is not returned to the API while its WPE/signaling runtime is still starting.
 - A synchronous reservation closes concurrent-create quota races. Per-tenant and host-wide session, memory, CPU-share, and PID limits include starts that are still pending.
@@ -39,13 +41,13 @@ Tickets and tokens are never accepted in query strings. A reconnect ticket can o
 
 [`session/Dockerfile`](session/Dockerfile) builds for `linux/amd64` and `linux/arm64` from a Debian Trixie multi-platform digest. It compiles only the `gst-plugin-webrtc` package from the exact GStreamer `1.26.2` source revision, with Cargo's lockfile enforced. The runtime is non-root UID/GID `10001`, uses a read-only root filesystem plus `/run/fireball-session` tmpfs, and records installed component versions inside the artifact.
 
-This is an engineering candidate, not a promoted release. The normal CI validates source, contracts, authentication behavior, and image provenance. The manual `session-image` workflow must build, start, health-check, authenticate, reconnect, and smoke both architectures before a digest can be promoted. End-to-end H.264 performance, WebRTC media negotiation, TURN, and the two-tenant isolation gate remain release evidence still to collect. See [the session-image architecture and promotion gates](docs/session-image.md).
+This is an engineering candidate, not a promoted release. The normal CI validates source, contracts, authentication behavior, deployment-adapter configuration, and image provenance. The manual `session-image` workflow must build, start, health-check, authenticate, reconnect, and smoke both architectures before a digest can be promoted. End-to-end H.264 performance, WebRTC media negotiation, real TURN traversal, and the two-tenant isolation gate remain release evidence still to collect. See [the session-image architecture and promotion gates](docs/session-image.md).
 
 ## Production configuration
 
 ```sh
 NODE_ENV=production
-FIREBALL_HOST=0.0.0.0
+FIREBALL_HOST=127.0.0.1
 FIREBALL_PORT=8787
 FIREBALL_OIDC_ISSUER=https://identity.example.com/
 FIREBALL_OIDC_AUDIENCE=fireball-docker
@@ -61,12 +63,13 @@ FIREBALL_MAX_PIDS=1024
 FIREBALL_SESSION_HEALTH_ATTEMPTS=60
 FIREBALL_SESSION_HEALTH_INTERVAL_MS=1000
 FIREBALL_SESSION_APPARMOR_PROFILE=fireball-session
+FIREBALL_ICE_SERVERS_FILE=/etc/fireball/ice-servers.json
 DOCKER_SOCKET=/var/run/docker.sock
 DOCKER_API_VERSION=1.47
 FIREBALL_SESSION_IMAGE=ghcr.io/lamppkk/fireball-session@sha256:<promoted-64-hex-digest>
 ```
 
-`FIREBALL_INSTANCE_ID` is required in production and scopes restart cleanup. Two simultaneously running orchestrators must never share it because either process may reap resources owned by that instance during startup. `FIREBALL_PUBLIC_ORIGINS` accepts one to eight comma-separated exact HTTPS origins. `FIREBALL_SESSION_IMAGE` is also required in production and must end in an immutable `sha256` digest; a mutable tag is rejected before startup. On Ubuntu 24.04 hosts, load [`deploy/apparmor/fireball-session`](deploy/apparmor/fireball-session) and set `FIREBALL_SESSION_APPARMOR_PROFILE=fireball-session`; this host profile is necessary but is not sufficient with Docker's default seccomp policy. The current AMD64 runtime smoke still fails closed when bubblewrap creates the nested WebKit sandbox. Do not disable the WebKit sandbox, use `seccomp=unconfined`, or globally disable the host restriction. Omit the AppArmor setting on hosts without AppArmor. The current signaling slice requires the orchestrator process to share the Docker host network namespace so it can reach a random port bound strictly to `127.0.0.1`; a container-to-container private-network adapter remains future work. OIDC issuer matching is exact. The default JWT allowlist is `RS256`, `PS256`, and `ES256`; symmetric JWT algorithms are rejected. Reverse proxy TLS and rate limiting remain deployment requirements.
+`FIREBALL_INSTANCE_ID` is required in production and scopes restart cleanup. Two simultaneously running orchestrators must never share it because either process may reap resources owned by that instance during startup. `FIREBALL_PUBLIC_ORIGINS` accepts one to eight comma-separated exact HTTPS origins. `FIREBALL_SESSION_IMAGE` is also required in production and must end in an immutable `sha256` digest; a mutable tag is rejected before startup. On Ubuntu 24.04 hosts, load [`deploy/apparmor/fireball-session`](deploy/apparmor/fireball-session) and set `FIREBALL_SESSION_APPARMOR_PROFILE=fireball-session`; this host profile is necessary but is not sufficient with Docker's default seccomp policy. The current AMD64 runtime smoke still fails closed when bubblewrap creates the nested WebKit sandbox. Do not disable the WebKit sandbox, use `seccomp=unconfined`, or globally disable the host restriction. Omit the AppArmor setting on hosts without AppArmor. The current signaling slice requires the orchestrator process to share the Docker host network namespace so it can reach a random port bound strictly to `127.0.0.1`; a container-to-container private-network adapter remains future work. OIDC issuer matching is exact. The default JWT allowlist is `RS256`, `PS256`, and `ES256`; symmetric JWT algorithms are rejected. The optional `FIREBALL_ICE_SERVERS_FILE` must be an absolute Docker-host path and is mounted read-only into new session containers. See the checked [TURN and Nginx deployment adapter runbook](docs/deployment-adapters.md) before enabling it or exposing the API.
 
 Access to the Docker Engine socket is effectively host-control authority. Run the orchestrator on a dedicated host, restrict socket access to its service identity, and never expose the socket through the public API container network. When the image runs as its non-root `fireball` user, the deployment must grant only that process the host Docker socket group ID.
 
@@ -79,7 +82,7 @@ npm run check
 docker build -f deploy/Dockerfile -t fireball/orchestrator:dev .
 ```
 
-The test suite covers cross-tenant denial, public session redaction, pairing/signaling replay and expiry, exact-origin WebSocket upgrades, dual-hop authentication, frame relay, burn-time socket revocation, session bootstrap isolation, one-controller enforcement, failed cleanup state, real asymmetric JWT signing/verification, Docker isolation options, loopback-only signaling publication, startup health gating, idempotent cleanup, create rollback, restart reconciliation ownership, aggregate cleanup failure, and concurrent quota reservations.
+The test suite covers cross-tenant denial, public session redaction, pairing/signaling replay and expiry, exact-origin WebSocket upgrades, dual-hop authentication, frame relay, burn-time socket revocation, session bootstrap isolation, one-controller enforcement, failed cleanup state, real asymmetric JWT signing/verification, Docker isolation options, loopback-only signaling publication, read-only TURN secret mounts, strict ICE configuration, injection-safe Nginx rendering, startup health gating, idempotent cleanup, create rollback, restart reconciliation ownership, aggregate cleanup failure, and concurrent quota reservations.
 
 ### Docker Desktop on macOS
 
@@ -106,7 +109,7 @@ or Docker Desktop screenshots are not presented as product UI.
 
 - Run and pass the manual two-architecture session-image build, then publish and sign the exact promoted digest instead of rebuilding after QA.
 - Complete end-to-end WPE rendering, H.264/Opus negotiation, control DataChannel, reconnect, and burn tests against that exact image.
-- Add TURN/reverse-proxy deployment adapters without embedding credentials in the image.
+- Validate TURN allocation and relay-only media/control against the exact candidate digest through the checked deployment adapters.
 - Run the isolation gate against a real Docker Engine and prove two tenants cannot observe cookie, storage, process, network namespace, or signaling state.
 - Open multi-tab APIs only after that isolation gate passes.
 
