@@ -56,3 +56,6 @@ jobs:
         run: npm run container:smoke --prefix session -- "fireball/session-wpe:test-${{ matrix.suffix }}" "${{ matrix.platform }}"
         env:
           FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
+      - name: Report kernel sandbox denials
+        if: failure()
+        run: sudo journalctl --dmesg --since "10 minutes ago" --no-pager | grep -E -i 'apparmor|seccomp|audit.*denied' || true

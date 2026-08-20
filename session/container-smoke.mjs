@@ -53,7 +53,18 @@ try {
   await waitForHealthy();
   assert.equal(docker(["inspect", "--format", "{{.Config.User}}", containerName]), "10001:10001");
   assert.equal(docker(["inspect", "--format", "{{.HostConfig.ReadonlyRootfs}}", containerName]), "true");
-  assert.equal(docker(["inspect", "--format", "{{.HostConfig.SecurityOpt}}", containerName]), "[no-new-privileges:true]");
+  const securityOptions = JSON.parse(
+    docker(["inspect", "--format", "{{json .HostConfig.SecurityOpt}}", containerName]),
+  );
+  assert.ok(Array.isArray(securityOptions));
+  assert.ok(securityOptions.includes("no-new-privileges:true"));
+  if (appArmorProfile) {
+    assert.equal(
+      docker(["inspect", "--format", "{{.AppArmorProfile}}", containerName]),
+      appArmorProfile,
+    );
+    assert.ok(securityOptions.includes(`apparmor=${appArmorProfile}`));
+  }
 
   const portOutput = docker(["port", containerName, "8444/tcp"]);
   const portMatch = /^127\.0\.0\.1:([1-9][0-9]{0,4})$/.exec(portOutput);
@@ -75,6 +86,13 @@ try {
   process.stdout.write(`session container smoke passed for ${platform ?? "native"}\n`);
 } catch (error) {
   if (containerCreated) {
+    const confinement = docker([
+      "inspect",
+      "--format",
+      "apparmor={{.AppArmorProfile}} security={{json .HostConfig.SecurityOpt}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}",
+      containerName,
+    ], { allowFailure: true });
+    if (confinement) process.stderr.write(`--- session confinement ---\n${confinement}\n`);
     const logs = docker(["logs", containerName], { allowFailure: true });
     if (logs) process.stderr.write(`--- session container logs ---\n${logs}\n`);
   }
