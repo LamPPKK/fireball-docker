@@ -11,6 +11,10 @@ export interface SessionQuota {
   readonly pids: number;
 }
 
+export interface HostCapacity extends SessionQuota {
+  readonly maximumSessions: number;
+}
+
 export interface RuntimeResource {
   readonly containerId: string;
   readonly containerName: string;

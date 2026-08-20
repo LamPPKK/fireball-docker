@@ -6,7 +6,13 @@ export interface CreateRuntimeRequest {
   readonly quota: SessionQuota;
 }
 
+export interface ReconciliationResult {
+  readonly containersRemoved: number;
+  readonly networksRemoved: number;
+}
+
 export interface RuntimeAdapter {
   create(request: CreateRuntimeRequest): Promise<RuntimeResource>;
   destroy(resource: RuntimeResource): Promise<void>;
+  reconcile(): Promise<ReconciliationResult>;
 }

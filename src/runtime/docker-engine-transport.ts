@@ -8,15 +8,25 @@ export interface DockerEngineResponse {
   readonly message?: string;
 }
 
+export interface DockerContainerSummary {
+  readonly Id?: string;
+  readonly Labels?: Record<string, string>;
+}
+
+export interface DockerNetworkSummary {
+  readonly Id?: string;
+  readonly Labels?: Record<string, string>;
+}
+
 export interface DockerEngineRequest {
-  readonly method: "POST" | "DELETE";
+  readonly method: "GET" | "POST" | "DELETE";
   readonly path: string;
   readonly body?: unknown;
   readonly acceptedStatusCodes: readonly number[];
 }
 
 export interface DockerEngineTransport {
-  call(request: DockerEngineRequest): Promise<DockerEngineResponse>;
+  call<T>(request: DockerEngineRequest): Promise<T>;
 }
 
 export class UnixSocketDockerEngineTransport implements DockerEngineTransport {
@@ -30,9 +40,9 @@ export class UnixSocketDockerEngineTransport implements DockerEngineTransport {
     }
   }
 
-  public async call(input: DockerEngineRequest): Promise<DockerEngineResponse> {
+  public async call<T>(input: DockerEngineRequest): Promise<T> {
     const payload = input.body === undefined ? undefined : JSON.stringify(input.body);
-    return await new Promise<DockerEngineResponse>((resolve, reject) => {
+    return await new Promise<T>((resolve, reject) => {
       const request = httpRequest(
         {
           socketPath: this.socketPath,
@@ -47,20 +57,20 @@ export class UnixSocketDockerEngineTransport implements DockerEngineTransport {
           response.on("data", (chunk: Buffer) => chunks.push(chunk));
           response.on("end", () => {
             const text = Buffer.concat(chunks).toString("utf8");
-            let parsed: DockerEngineResponse = {};
+            let parsed: unknown = {};
             if (text) {
               try {
-                parsed = JSON.parse(text) as DockerEngineResponse;
+                parsed = JSON.parse(text) as unknown;
               } catch {
                 reject(new OrchestratorError("RUNTIME_FAILURE", "Docker Engine returned invalid JSON", 503));
                 return;
               }
             }
             if (!input.acceptedStatusCodes.includes(response.statusCode ?? 500)) {
-              reject(new OrchestratorError("RUNTIME_FAILURE", parsed.message ?? "Docker Engine request failed", 503));
+              reject(new OrchestratorError("RUNTIME_FAILURE", dockerErrorMessage(parsed), 503));
               return;
             }
-            resolve(parsed);
+            resolve(parsed as T);
           });
         },
       );
@@ -70,4 +80,13 @@ export class UnixSocketDockerEngineTransport implements DockerEngineTransport {
       request.end();
     });
   }
+}
+
+function dockerErrorMessage(value: unknown): string {
+  if (isRecord(value) && typeof value.message === "string" && value.message.length > 0) return value.message;
+  return "Docker Engine request failed";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

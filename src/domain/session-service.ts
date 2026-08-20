@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { OrchestratorError } from "./errors.js";
 import type {
   CreateSessionResult,
+  HostCapacity,
   SessionQuota,
   SessionRecord,
   SignalingAuthorization,
@@ -14,6 +15,12 @@ import type { RuntimeAdapter } from "../runtime/runtime-adapter.js";
 const DEFAULT_QUOTA: SessionQuota = { memoryMiB: 512, cpuShares: 512, pids: 128 };
 const DEFAULT_PAIRING_TICKET_TTL_SECONDS = 60;
 const DEFAULT_SIGNALING_TOKEN_TTL_SECONDS = 30;
+const DEFAULT_HOST_CAPACITY: HostCapacity = {
+  maximumSessions: 8,
+  memoryMiB: 4_096,
+  cpuShares: 4_096,
+  pids: 1_024,
+};
 
 interface CredentialBinding {
   readonly sessionKey: string;
@@ -25,9 +32,15 @@ interface SessionCredentials {
   readonly signalingTokenHashes: Set<string>;
 }
 
+interface SessionReservation {
+  readonly tenantId: string;
+  readonly quota: SessionQuota;
+}
+
 export interface SessionServiceOptions {
   readonly maximumSessionsPerTenant?: number;
   readonly quota?: SessionQuota;
+  readonly hostCapacity?: HostCapacity;
   readonly pairingTicketTTLSeconds?: number;
   readonly signalingTokenTTLSeconds?: number;
   readonly now?: () => number;
@@ -38,8 +51,10 @@ export class SessionService {
   private readonly pairingTickets = new Map<string, CredentialBinding>();
   private readonly signalingTokens = new Map<string, CredentialBinding>();
   private readonly credentialsBySession = new Map<string, SessionCredentials>();
+  private readonly reservations = new Map<string, SessionReservation>();
   private readonly maximumSessionsPerTenant: number;
   private readonly quota: SessionQuota;
+  private readonly hostCapacity: HostCapacity;
   private readonly pairingTicketTTLSeconds: number;
   private readonly signalingTokenTTLSeconds: number;
   private readonly now: () => number;
@@ -50,6 +65,10 @@ export class SessionService {
   ) {
     this.maximumSessionsPerTenant = positiveInteger(options.maximumSessionsPerTenant ?? 1, "session limit");
     this.quota = validateQuota(options.quota ?? DEFAULT_QUOTA);
+    this.hostCapacity = validateHostCapacity(options.hostCapacity ?? DEFAULT_HOST_CAPACITY);
+    if (!fitsWithin(this.quota, this.hostCapacity)) {
+      throw new Error("per-session quota exceeds host capacity");
+    }
     this.pairingTicketTTLSeconds = positiveInteger(
       options.pairingTicketTTLSeconds ?? DEFAULT_PAIRING_TICKET_TTL_SECONDS,
       "pairing ticket TTL",
@@ -62,38 +81,38 @@ export class SessionService {
   }
 
   public async create(context: TenantContext): Promise<CreateSessionResult> {
-    const activeCount = [...this.sessions.values()].filter((session) => session.tenantId === context.tenantId).length;
-    if (activeCount >= this.maximumSessionsPerTenant) {
-      throw new OrchestratorError("SESSION_LIMIT_REACHED", "tenant session quota reached", 409);
-    }
-
     const id = randomUUID();
     const signalingTicket = randomBytes(32).toString("base64url");
-    const runtime = await this.runtime.create({ sessionId: id, tenantId: context.tenantId, quota: this.quota });
-    const record: SessionRecord = {
-      id,
-      tenantId: context.tenantId,
-      phase: "active",
-      createdAt: new Date().toISOString(),
-      quota: this.quota,
-      runtime,
-    };
-    const sessionKey = this.key(context.tenantId, id);
-    const ticketHash = hashCredential(signalingTicket);
-    this.sessions.set(sessionKey, record);
-    this.pairingTickets.set(ticketHash, {
-      sessionKey,
-      expiresAt: this.now() + this.pairingTicketTTLSeconds * 1_000,
-    });
-    this.credentialsBySession.set(sessionKey, {
-      pairingTicketHash: ticketHash,
-      signalingTokenHashes: new Set<string>(),
-    });
-    return {
-      session: record,
-      signalingTicket,
-      ticketExpiresInSeconds: this.pairingTicketTTLSeconds,
-    };
+    this.reserve(id, context.tenantId);
+    try {
+      const runtime = await this.runtime.create({ sessionId: id, tenantId: context.tenantId, quota: this.quota });
+      const record: SessionRecord = {
+        id,
+        tenantId: context.tenantId,
+        phase: "active",
+        createdAt: new Date().toISOString(),
+        quota: this.quota,
+        runtime,
+      };
+      const sessionKey = this.key(context.tenantId, id);
+      const ticketHash = hashCredential(signalingTicket);
+      this.sessions.set(sessionKey, record);
+      this.pairingTickets.set(ticketHash, {
+        sessionKey,
+        expiresAt: this.now() + this.pairingTicketTTLSeconds * 1_000,
+      });
+      this.credentialsBySession.set(sessionKey, {
+        pairingTicketHash: ticketHash,
+        signalingTokenHashes: new Set<string>(),
+      });
+      return {
+        session: record,
+        signalingTicket,
+        ticketExpiresInSeconds: this.pairingTicketTTLSeconds,
+      };
+    } finally {
+      this.reservations.delete(id);
+    }
   }
 
   public get(context: TenantContext, id: string): SessionRecord {
@@ -166,6 +185,43 @@ export class SessionService {
     return `${tenantId}:${id}`;
   }
 
+  private reserve(id: string, tenantId: string): void {
+    const tenantSessions = [...this.sessions.values()].filter((session) => session.tenantId === tenantId).length;
+    const tenantReservations = [...this.reservations.values()].filter(
+      (reservation) => reservation.tenantId === tenantId,
+    ).length;
+    if (tenantSessions + tenantReservations >= this.maximumSessionsPerTenant) {
+      throw new OrchestratorError("SESSION_LIMIT_REACHED", "tenant session quota reached", 409);
+    }
+
+    const allocation = this.currentAllocation();
+    if (
+      allocation.maximumSessions + 1 > this.hostCapacity.maximumSessions
+      || allocation.memoryMiB + this.quota.memoryMiB > this.hostCapacity.memoryMiB
+      || allocation.cpuShares + this.quota.cpuShares > this.hostCapacity.cpuShares
+      || allocation.pids + this.quota.pids > this.hostCapacity.pids
+    ) {
+      throw new OrchestratorError("SESSION_LIMIT_REACHED", "host session capacity reached", 409);
+    }
+    this.reservations.set(id, { tenantId, quota: this.quota });
+  }
+
+  private currentAllocation(): HostCapacity {
+    const quotas = [
+      ...[...this.sessions.values()].map((session) => session.quota),
+      ...[...this.reservations.values()].map((reservation) => reservation.quota),
+    ];
+    return quotas.reduce<HostCapacity>(
+      (total, quota) => ({
+        maximumSessions: total.maximumSessions + 1,
+        memoryMiB: total.memoryMiB + quota.memoryMiB,
+        cpuShares: total.cpuShares + quota.cpuShares,
+        pids: total.pids + quota.pids,
+      }),
+      { maximumSessions: 0, memoryMiB: 0, cpuShares: 0, pids: 0 },
+    );
+  }
+
   private revokeCredentials(sessionKey: string): void {
     const credentials = this.credentialsBySession.get(sessionKey);
     if (!credentials) return;
@@ -199,4 +255,17 @@ function validateQuota(quota: SessionQuota): SessionQuota {
     cpuShares: positiveInteger(quota.cpuShares, "CPU shares"),
     pids: positiveInteger(quota.pids, "PID quota"),
   };
+}
+
+function validateHostCapacity(capacity: HostCapacity): HostCapacity {
+  return {
+    maximumSessions: positiveInteger(capacity.maximumSessions, "host session capacity"),
+    ...validateQuota(capacity),
+  };
+}
+
+function fitsWithin(quota: SessionQuota, capacity: HostCapacity): boolean {
+  return quota.memoryMiB <= capacity.memoryMiB
+    && quota.cpuShares <= capacity.cpuShares
+    && quota.pids <= capacity.pids;
 }

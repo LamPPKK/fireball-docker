@@ -2,15 +2,18 @@ import { OrchestratorError } from "../domain/errors.js";
 import type { RuntimeResource } from "../domain/types.js";
 import {
   UnixSocketDockerEngineTransport,
+  type DockerContainerSummary,
   type DockerEngineResponse,
   type DockerEngineTransport,
+  type DockerNetworkSummary,
 } from "./docker-engine-transport.js";
-import type { CreateRuntimeRequest, RuntimeAdapter } from "./runtime-adapter.js";
+import type { CreateRuntimeRequest, ReconciliationResult, RuntimeAdapter } from "./runtime-adapter.js";
 
 export interface DockerEngineOptions {
   readonly socketPath: string;
   readonly apiVersion: string;
   readonly image: string;
+  readonly instanceId: string;
 }
 
 export class DockerEngineRuntime implements RuntimeAdapter {
@@ -22,6 +25,7 @@ export class DockerEngineRuntime implements RuntimeAdapter {
   ) {
     if (!/^\d+\.\d+$/.test(options.apiVersion)) throw new Error("Docker API version must be numeric");
     if (!options.image.trim() || options.image.length > 255) throw new Error("session image must be non-empty");
+    if (!isSafeLabelValue(options.instanceId)) throw new Error("orchestrator instance id is invalid");
     this.transport = transport ?? new UnixSocketDockerEngineTransport(options.socketPath);
   }
 
@@ -35,18 +39,18 @@ export class DockerEngineRuntime implements RuntimeAdapter {
       Name: networkNamespace,
       CheckDuplicate: true,
       Internal: false,
-      Labels: isolationLabels(input),
+      Labels: isolationLabels(input, this.options.instanceId),
     });
     networkCreated = true;
 
     try {
-      const response = await this.call(
+      const response = await this.call<DockerEngineResponse>(
         "POST",
         `/v${this.options.apiVersion}/containers/create?name=${encodeURIComponent(containerName)}`,
         [201],
         {
           Image: this.options.image,
-          Labels: isolationLabels(input),
+          Labels: isolationLabels(input, this.options.instanceId),
           HostConfig: {
             AutoRemove: false,
             Memory: input.quota.memoryMiB * 1024 * 1024,
@@ -114,22 +118,116 @@ export class DockerEngineRuntime implements RuntimeAdapter {
     }
   }
 
-  private async call(
-    method: "POST" | "DELETE",
+  public async reconcile(): Promise<ReconciliationResult> {
+    const failures: string[] = [];
+    let containersRemoved = 0;
+    let networksRemoved = 0;
+    const containers = await this.listManagedContainers();
+    for (const container of containers) {
+      const id = managedResourceId(container, this.options.instanceId);
+      if (!id) continue;
+      await this.call(
+        "DELETE",
+        `/v${this.options.apiVersion}/containers/${encodeURIComponent(id)}?force=true&v=true`,
+        [204, 404],
+      )
+        .then(() => {
+          containersRemoved += 1;
+        })
+        .catch((error: unknown) => failures.push(`container ${id}: ${errorMessage(error)}`));
+    }
+
+    const networks = await this.listManagedNetworks();
+    for (const network of networks) {
+      const id = managedResourceId(network, this.options.instanceId);
+      if (!id) continue;
+      await this.call("DELETE", `/v${this.options.apiVersion}/networks/${encodeURIComponent(id)}`, [204, 404])
+        .then(() => {
+          networksRemoved += 1;
+        })
+        .catch((error: unknown) => failures.push(`network ${id}: ${errorMessage(error)}`));
+    }
+    if (failures.length > 0) {
+      throw new OrchestratorError("RUNTIME_FAILURE", `runtime reconciliation failed: ${failures.join("; ")}`, 503);
+    }
+    return { containersRemoved, networksRemoved };
+  }
+
+  private async listManagedContainers(): Promise<readonly unknown[]> {
+    const response = await this.call<unknown>(
+      "GET",
+      `/v${this.options.apiVersion}/containers/json?all=true&filters=${ownershipFilter(this.options.instanceId)}`,
+      [200],
+    );
+    if (!Array.isArray(response)) {
+      throw new OrchestratorError("RUNTIME_FAILURE", "Docker Engine returned an invalid container list", 503);
+    }
+    return response;
+  }
+
+  private async listManagedNetworks(): Promise<readonly unknown[]> {
+    const response = await this.call<unknown>(
+      "GET",
+      `/v${this.options.apiVersion}/networks?filters=${ownershipFilter(this.options.instanceId)}`,
+      [200],
+    );
+    if (!Array.isArray(response)) {
+      throw new OrchestratorError("RUNTIME_FAILURE", "Docker Engine returned an invalid network list", 503);
+    }
+    return response;
+  }
+
+  private async call<T = DockerEngineResponse>(
+    method: "GET" | "POST" | "DELETE",
     path: string,
     acceptedStatusCodes: readonly number[],
     body?: unknown,
-  ): Promise<DockerEngineResponse> {
-    return await this.transport.call({ method, path, acceptedStatusCodes, ...(body === undefined ? {} : { body }) });
+  ): Promise<T> {
+    return await this.transport.call<T>({
+      method,
+      path,
+      acceptedStatusCodes,
+      ...(body === undefined ? {} : { body }),
+    });
   }
 }
 
-function isolationLabels(input: CreateRuntimeRequest): Record<string, string> {
+function isolationLabels(input: CreateRuntimeRequest, instanceId: string): Record<string, string> {
   return {
     "dev.fireball.managed": "true",
+    "dev.fireball.instance": instanceId,
     "dev.fireball.session": input.sessionId,
     "dev.fireball.tenant": input.tenantId,
   };
+}
+
+function ownershipFilter(instanceId: string): string {
+  return encodeURIComponent(JSON.stringify({
+    label: ["dev.fireball.managed=true", `dev.fireball.instance=${instanceId}`],
+  }));
+}
+
+function managedResourceId(
+  resource: unknown,
+  instanceId: string,
+): string | undefined {
+  if (typeof resource !== "object" || resource === null || Array.isArray(resource)) return undefined;
+  const summary = resource as DockerContainerSummary | DockerNetworkSummary;
+  const labels = summary.Labels;
+  const id = summary.Id;
+  if (
+    labels?.["dev.fireball.managed"] !== "true"
+    || labels["dev.fireball.instance"] !== instanceId
+    || typeof id !== "string"
+    || !/^[A-Za-z0-9_.:-]{1,128}$/.test(id)
+  ) {
+    return undefined;
+  }
+  return id;
+}
+
+function isSafeLabelValue(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value);
 }
 
 function errorMessage(error: unknown): string {

@@ -5,7 +5,6 @@ import { OrchestratorError } from "../src/domain/errors.js";
 import { DockerEngineRuntime } from "../src/runtime/docker-engine-runtime.js";
 import type {
   DockerEngineRequest,
-  DockerEngineResponse,
   DockerEngineTransport,
 } from "../src/runtime/docker-engine-transport.js";
 
@@ -23,6 +22,10 @@ test("Docker runtime applies the tenant isolation contract", async () => {
 
   assert.equal(resource.containerId, "container-1");
   assert.deepEqual(transport.calls.map((call) => call.acceptedStatusCodes), [[201], [201], [204]]);
+  const createNetwork = transport.calls[0];
+  assert.ok(createNetwork);
+  const networkBody = createNetwork.body as { Labels: Record<string, string> };
+  assert.equal(networkBody.Labels["dev.fireball.instance"], "test-instance");
   const createContainer = transport.calls[1];
   assert.ok(createContainer);
   const body = createContainer.body as {
@@ -38,6 +41,7 @@ test("Docker runtime applies the tenant isolation contract", async () => {
     };
   };
   assert.equal(body.Labels["dev.fireball.tenant"], "alpha");
+  assert.equal(body.Labels["dev.fireball.instance"], "test-instance");
   assert.equal(body.HostConfig.ReadonlyRootfs, true);
   assert.deepEqual(body.HostConfig.CapDrop, ["ALL"]);
   assert.deepEqual(body.HostConfig.SecurityOpt, ["no-new-privileges:true"]);
@@ -104,9 +108,78 @@ test("Docker runtime cleanup is idempotent when resources are already absent", a
   assert.deepEqual(transport.calls[1]?.acceptedStatusCodes, [204, 404]);
 });
 
+test("startup reconciliation removes only resources owned by this orchestrator instance", async () => {
+  const transport = new RecordingTransport([
+    [
+      { Id: "owned-container", Labels: ownershipLabels("test-instance") },
+      { Id: "foreign-container", Labels: ownershipLabels("another-instance") },
+      { Id: "unsafe/container", Labels: ownershipLabels("test-instance") },
+    ],
+    {},
+    [
+      { Id: "owned-network", Labels: ownershipLabels("test-instance") },
+      { Id: "foreign-network", Labels: ownershipLabels("another-instance") },
+    ],
+    {},
+  ]);
+  const runtime = makeRuntime(transport);
+
+  const result = await runtime.reconcile();
+
+  assert.deepEqual(result, { containersRemoved: 1, networksRemoved: 1 });
+  assert.deepEqual(
+    transport.calls.map((call) => `${call.method} ${call.path}`),
+    [
+      `GET /v1.47/containers/json?all=true&filters=${ownershipFilter("test-instance")}`,
+      "DELETE /v1.47/containers/owned-container?force=true&v=true",
+      `GET /v1.47/networks?filters=${ownershipFilter("test-instance")}`,
+      "DELETE /v1.47/networks/owned-network",
+    ],
+  );
+});
+
+test("startup reconciliation attempts every cleanup and reports aggregate failure", async () => {
+  const transport = new RecordingTransport([
+    [
+      { Id: "container-one", Labels: ownershipLabels("test-instance") },
+      { Id: "container-two", Labels: ownershipLabels("test-instance") },
+    ],
+    new Error("container one failed"),
+    {},
+    [{ Id: "network-one", Labels: ownershipLabels("test-instance") }],
+    new Error("network one failed"),
+  ]);
+  const runtime = makeRuntime(transport);
+
+  await assert.rejects(
+    runtime.reconcile(),
+    (error: unknown) => error instanceof OrchestratorError
+      && error.code === "RUNTIME_FAILURE"
+      && error.message.includes("container one failed")
+      && error.message.includes("network one failed"),
+  );
+  assert.equal(transport.calls.length, 5);
+});
+
+test("startup reconciliation fails closed on an invalid Docker list response", async () => {
+  const runtime = makeRuntime(new RecordingTransport([null]));
+
+  await assert.rejects(
+    runtime.reconcile(),
+    (error: unknown) => error instanceof OrchestratorError
+      && error.code === "RUNTIME_FAILURE"
+      && error.message.includes("invalid container list"),
+  );
+});
+
 function makeRuntime(transport: DockerEngineTransport): DockerEngineRuntime {
   return new DockerEngineRuntime(
-    { socketPath: "/var/run/docker.sock", apiVersion: "1.47", image: "fireball/session-wpe:test" },
+    {
+      socketPath: "/var/run/docker.sock",
+      apiVersion: "1.47",
+      image: "fireball/session-wpe:test",
+      instanceId: "test-instance",
+    },
     transport,
   );
 }
@@ -114,13 +187,26 @@ function makeRuntime(transport: DockerEngineTransport): DockerEngineRuntime {
 class RecordingTransport implements DockerEngineTransport {
   public readonly calls: DockerEngineRequest[] = [];
 
-  public constructor(private readonly results: Array<DockerEngineResponse | Error>) {}
+  public constructor(private readonly results: Array<unknown | Error>) {}
 
-  public async call(request: DockerEngineRequest): Promise<DockerEngineResponse> {
+  public async call<T>(request: DockerEngineRequest): Promise<T> {
     this.calls.push(request);
     const result = this.results.shift();
-    if (!result) throw new Error("missing transport fixture");
+    if (result === undefined) throw new Error("missing transport fixture");
     if (result instanceof Error) throw result;
-    return result;
+    return result as T;
   }
+}
+
+function ownershipLabels(instanceId: string): Record<string, string> {
+  return {
+    "dev.fireball.managed": "true",
+    "dev.fireball.instance": instanceId,
+  };
+}
+
+function ownershipFilter(instanceId: string): string {
+  return encodeURIComponent(JSON.stringify({
+    label: ["dev.fireball.managed=true", `dev.fireball.instance=${instanceId}`],
+  }));
 }
