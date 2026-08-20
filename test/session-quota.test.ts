@@ -49,7 +49,7 @@ test("a failed runtime create releases its host and tenant reservation", async (
   const retry = sessions.create(alpha);
   runtime.resolveNext();
   const created = await retry;
-  assert.equal(created.session.tenantId, "alpha");
+  assert.match(created.session.id, /^[0-9a-f-]{36}$/);
 });
 
 test("per-session quota must fit within configured host capacity", () => {
@@ -96,6 +96,8 @@ class GatedRuntime implements RuntimeAdapter {
       containerName: `fireball-${pending.request.sessionId}`,
       networkNamespace: `fireball-net-${pending.request.sessionId}`,
       storageNamespace: `tmpfs-${pending.request.sessionId}`,
+      signalingEndpoint: "ws://127.0.0.1:49152/internal/v1/signaling",
+      signalingSecret: "A".repeat(43),
     });
   }
 

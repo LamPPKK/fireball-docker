@@ -15,13 +15,13 @@ const request = {
 } as const;
 
 test("Docker runtime applies the tenant isolation contract", async () => {
-  const transport = new RecordingTransport([{}, { Id: "container-1" }, {}]);
+  const transport = new RecordingTransport([{}, { Id: "container-1" }, {}, signalingInspect("49152")]);
   const runtime = makeRuntime(transport);
 
   const resource = await runtime.create(request);
 
   assert.equal(resource.containerId, "container-1");
-  assert.deepEqual(transport.calls.map((call) => call.acceptedStatusCodes), [[201], [201], [204]]);
+  assert.deepEqual(transport.calls.map((call) => call.acceptedStatusCodes), [[201], [201], [204], [200]]);
   const createNetwork = transport.calls[0];
   assert.ok(createNetwork);
   const networkBody = createNetwork.body as { Labels: Record<string, string> };
@@ -30,6 +30,8 @@ test("Docker runtime applies the tenant isolation contract", async () => {
   assert.ok(createContainer);
   const body = createContainer.body as {
     Labels: Record<string, string>;
+    Env: string[];
+    ExposedPorts: Record<string, unknown>;
     HostConfig: {
       ReadonlyRootfs: boolean;
       CapDrop: string[];
@@ -38,6 +40,7 @@ test("Docker runtime applies the tenant isolation contract", async () => {
       PidsLimit: number;
       NetworkMode: string;
       Tmpfs: Record<string, string>;
+      PortBindings: Record<string, Array<{ HostIp: string; HostPort: string }>>;
     };
   };
   assert.equal(body.Labels["dev.fireball.tenant"], "alpha");
@@ -49,6 +52,11 @@ test("Docker runtime applies the tenant isolation contract", async () => {
   assert.equal(body.HostConfig.PidsLimit, 128);
   assert.equal(body.HostConfig.NetworkMode, `fireball-net-${request.sessionId}`);
   assert.match(body.HostConfig.Tmpfs["/run/fireball-session"] ?? "", /noexec,nosuid,nodev/);
+  assert.deepEqual(body.ExposedPorts, { "8444/tcp": {} });
+  assert.deepEqual(body.HostConfig.PortBindings["8444/tcp"], [{ HostIp: "127.0.0.1", HostPort: "" }]);
+  assert.match(resource.signalingSecret, /^[A-Za-z0-9_-]{43}$/);
+  assert.ok(body.Env.includes(`FIREBALL_INTERNAL_SIGNALING_SECRET=${resource.signalingSecret}`));
+  assert.equal(resource.signalingEndpoint, "ws://127.0.0.1:49152/internal/v1/signaling");
 });
 
 test("Docker runtime removes both container and network when start fails", async () => {
@@ -80,6 +88,35 @@ test("Docker runtime removes both container and network when start fails", async
   assert.deepEqual(transport.calls[4]?.acceptedStatusCodes, [204, 404]);
 });
 
+test("Docker runtime rolls back when signaling is not published on loopback", async () => {
+  const transport = new RecordingTransport([
+    {},
+    { Id: "container-1" },
+    {},
+    {
+      NetworkSettings: {
+        Ports: { "8444/tcp": [{ HostIp: "0.0.0.0", HostPort: "49152" }] },
+      },
+    },
+    {},
+    {},
+  ]);
+  const runtime = makeRuntime(transport);
+
+  await assert.rejects(
+    runtime.create(request),
+    (error: unknown) => error instanceof OrchestratorError && error.code === "RUNTIME_FAILURE",
+  );
+
+  assert.deepEqual(
+    transport.calls.slice(-2).map((call) => `${call.method} ${call.path}`),
+    [
+      "DELETE /v1.47/containers/container-1?force=true&v=true",
+      `DELETE /v1.47/networks/fireball-net-${request.sessionId}`,
+    ],
+  );
+});
+
 test("Docker runtime rolls back by container name when create omits its id", async () => {
   const transport = new RecordingTransport([{}, {}, {}, {}]);
   const runtime = makeRuntime(transport);
@@ -102,6 +139,8 @@ test("Docker runtime cleanup is idempotent when resources are already absent", a
     containerName: "fireball-missing",
     networkNamespace: "missing-network",
     storageNamespace: "missing-storage",
+    signalingEndpoint: "ws://127.0.0.1:49152/internal/v1/signaling",
+    signalingSecret: "A".repeat(43),
   });
 
   assert.deepEqual(transport.calls[0]?.acceptedStatusCodes, [204, 404]);
@@ -209,4 +248,12 @@ function ownershipFilter(instanceId: string): string {
   return encodeURIComponent(JSON.stringify({
     label: ["dev.fireball.managed=true", `dev.fireball.instance=${instanceId}`],
   }));
+}
+
+function signalingInspect(hostPort: string): unknown {
+  return {
+    NetworkSettings: {
+      Ports: { "8444/tcp": [{ HostIp: "127.0.0.1", HostPort: hostPort }] },
+    },
+  };
 }

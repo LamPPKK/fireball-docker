@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import type { RuntimeResource } from "../domain/types.js";
 import type { CreateRuntimeRequest, ReconciliationResult, RuntimeAdapter } from "./runtime-adapter.js";
@@ -13,6 +13,8 @@ export class InMemoryRuntime implements RuntimeAdapter {
       containerName: `fireball-${request.sessionId}`,
       networkNamespace: `net-${nonce}`,
       storageNamespace: `tmpfs-${nonce}`,
+      signalingEndpoint: "ws://127.0.0.1:1/internal/v1/signaling",
+      signalingSecret: randomBytes(32).toString("base64url"),
     };
     this.resources.set(resource.containerId, resource);
     return resource;

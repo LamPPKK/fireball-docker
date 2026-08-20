@@ -18,6 +18,15 @@ export interface DockerNetworkSummary {
   readonly Labels?: Record<string, string>;
 }
 
+export interface DockerContainerInspectResponse {
+  readonly NetworkSettings?: {
+    readonly Ports?: Record<string, ReadonlyArray<{
+      readonly HostIp?: string;
+      readonly HostPort?: string;
+    }> | null>;
+  };
+}
+
 export interface DockerEngineRequest {
   readonly method: "GET" | "POST" | "DELETE";
   readonly path: string;

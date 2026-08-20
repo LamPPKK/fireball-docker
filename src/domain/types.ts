@@ -20,6 +20,8 @@ export interface RuntimeResource {
   readonly containerName: string;
   readonly networkNamespace: string;
   readonly storageNamespace: string;
+  readonly signalingEndpoint: string;
+  readonly signalingSecret: string;
 }
 
 export interface SessionRecord {
@@ -32,8 +34,16 @@ export interface SessionRecord {
   readonly failure?: string;
 }
 
+export interface SessionView {
+  readonly id: string;
+  readonly phase: SessionPhase;
+  readonly createdAt: string;
+  readonly quota: SessionQuota;
+  readonly failure?: string;
+}
+
 export interface CreateSessionResult {
-  readonly session: SessionRecord;
+  readonly session: SessionView;
   readonly signalingTicket: string;
   readonly ticketExpiresInSeconds: number;
 }

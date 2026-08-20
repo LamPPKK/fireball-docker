@@ -1,7 +1,10 @@
+import { randomBytes } from "node:crypto";
+
 import { OrchestratorError } from "../domain/errors.js";
 import type { RuntimeResource } from "../domain/types.js";
 import {
   UnixSocketDockerEngineTransport,
+  type DockerContainerInspectResponse,
   type DockerContainerSummary,
   type DockerEngineResponse,
   type DockerEngineTransport,
@@ -15,6 +18,9 @@ export interface DockerEngineOptions {
   readonly image: string;
   readonly instanceId: string;
 }
+
+const INTERNAL_SIGNALING_PORT = "8444/tcp";
+const SIGNALING_HOST = "127.0.0.1";
 
 export class DockerEngineRuntime implements RuntimeAdapter {
   private readonly transport: DockerEngineTransport;
@@ -32,6 +38,7 @@ export class DockerEngineRuntime implements RuntimeAdapter {
   public async create(input: CreateRuntimeRequest): Promise<RuntimeResource> {
     const containerName = `fireball-${input.sessionId}`;
     const networkNamespace = `fireball-net-${input.sessionId}`;
+    const signalingSecret = randomBytes(32).toString("base64url");
     let networkCreated = false;
     let containerCreated = false;
     let containerId: string | undefined;
@@ -51,6 +58,8 @@ export class DockerEngineRuntime implements RuntimeAdapter {
         {
           Image: this.options.image,
           Labels: isolationLabels(input, this.options.instanceId),
+          Env: [`FIREBALL_INTERNAL_SIGNALING_SECRET=${signalingSecret}`],
+          ExposedPorts: { [INTERNAL_SIGNALING_PORT]: {} },
           HostConfig: {
             AutoRemove: false,
             Memory: input.quota.memoryMiB * 1024 * 1024,
@@ -61,6 +70,9 @@ export class DockerEngineRuntime implements RuntimeAdapter {
             CapDrop: ["ALL"],
             SecurityOpt: ["no-new-privileges:true"],
             Tmpfs: { "/run/fireball-session": "rw,noexec,nosuid,nodev,size=256m,mode=0700" },
+            PortBindings: {
+              [INTERNAL_SIGNALING_PORT]: [{ HostIp: "127.0.0.1", HostPort: "" }],
+            },
           },
         },
       );
@@ -68,11 +80,19 @@ export class DockerEngineRuntime implements RuntimeAdapter {
       if (!response.Id) throw new Error("Docker did not return a container id");
       containerId = response.Id;
       await this.call("POST", `/v${this.options.apiVersion}/containers/${containerId}/start`, [204]);
+      const inspect = await this.call<DockerContainerInspectResponse>(
+        "GET",
+        `/v${this.options.apiVersion}/containers/${encodeURIComponent(containerId)}/json`,
+        [200],
+      );
+      const signalingPort = publishedSignalingPort(inspect);
       return {
         containerId,
         containerName,
         networkNamespace,
         storageNamespace: `/run/fireball-session:${response.Id}`,
+        signalingEndpoint: `ws://${SIGNALING_HOST}:${signalingPort}/internal/v1/signaling`,
+        signalingSecret,
       };
     } catch (error) {
       const rollbackFailures: string[] = [];
@@ -228,6 +248,24 @@ function managedResourceId(
 
 function isSafeLabelValue(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value);
+}
+
+function publishedSignalingPort(inspect: DockerContainerInspectResponse): number {
+  const bindings = inspect.NetworkSettings?.Ports?.[INTERNAL_SIGNALING_PORT];
+  const binding = bindings?.[0];
+  const raw = binding?.HostPort;
+  if (
+    binding?.HostIp !== "127.0.0.1"
+    || typeof raw !== "string"
+    || !/^[1-9][0-9]{0,4}$/.test(raw)
+  ) {
+    throw new Error("Docker did not publish the internal signaling port");
+  }
+  const port = Number(raw);
+  if (!Number.isSafeInteger(port) || port > 65_535) {
+    throw new Error("Docker returned an invalid signaling port");
+  }
+  return port;
 }
 
 function errorMessage(error: unknown): string {

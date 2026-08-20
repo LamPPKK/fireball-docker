@@ -4,6 +4,9 @@ import type { Authenticator } from "./auth/authenticator.js";
 import { buildApp } from "./app.js";
 import { SessionService } from "./domain/session-service.js";
 import { DockerEngineRuntime } from "./runtime/docker-engine-runtime.js";
+import { SignalingConnectionRegistry } from "./signaling/connection-registry.js";
+import { SignalingGateway } from "./signaling/signaling-gateway.js";
+import { WebSocketSignalingConnector } from "./signaling/upstream-connector.js";
 
 const environment = process.env.NODE_ENV ?? "development";
 const host = process.env.FIREBALL_HOST ?? "127.0.0.1";
@@ -24,17 +27,26 @@ const runtime = new DockerEngineRuntime({
     ? requiredEnvironment("FIREBALL_INSTANCE_ID")
     : process.env.FIREBALL_INSTANCE_ID ?? "development",
 });
+const signalingConnections = new SignalingConnectionRegistry();
+const sessions = new SessionService(runtime, {
+  maximumSessionsPerTenant: positiveEnvironment("FIREBALL_MAX_SESSIONS_PER_TENANT", 1),
+  hostCapacity: {
+    maximumSessions: positiveEnvironment("FIREBALL_MAX_SESSIONS", 8),
+    memoryMiB: positiveEnvironment("FIREBALL_MAX_MEMORY_MIB", 4_096),
+    cpuShares: positiveEnvironment("FIREBALL_MAX_CPU_SHARES", 4_096),
+    pids: positiveEnvironment("FIREBALL_MAX_PIDS", 1_024),
+  },
+  revokeSignalingConnections: (sessionId) => signalingConnections.revoke(sessionId),
+});
 const app = buildApp({
   authenticator: createAuthenticator(environment),
-  sessions: new SessionService(runtime, {
-    maximumSessionsPerTenant: positiveEnvironment("FIREBALL_MAX_SESSIONS_PER_TENANT", 1),
-    hostCapacity: {
-      maximumSessions: positiveEnvironment("FIREBALL_MAX_SESSIONS", 8),
-      memoryMiB: positiveEnvironment("FIREBALL_MAX_MEMORY_MIB", 4_096),
-      cpuShares: positiveEnvironment("FIREBALL_MAX_CPU_SHARES", 4_096),
-      pids: positiveEnvironment("FIREBALL_MAX_PIDS", 1_024),
-    },
-  }),
+  sessions,
+  signaling: new SignalingGateway(
+    sessions,
+    new WebSocketSignalingConnector(),
+    signalingConnections,
+  ),
+  signalingAllowedOrigins: parseSignalingOrigins(environment),
   logger: true,
 });
 
@@ -65,6 +77,34 @@ function positiveEnvironment(name: string, fallback: number): number {
   const value = Number(raw);
   if (!Number.isSafeInteger(value)) throw new Error(`${name} is outside the safe integer range`);
   return value;
+}
+
+function parseSignalingOrigins(nodeEnvironment: string): ReadonlySet<string> {
+  const raw = nodeEnvironment === "production"
+    ? requiredEnvironment("FIREBALL_PUBLIC_ORIGINS")
+    : process.env.FIREBALL_PUBLIC_ORIGINS ?? "http://127.0.0.1:8787";
+  const values = raw.split(",").map((value) => value.trim()).filter(Boolean);
+  if (values.length === 0 || values.length > 8 || new Set(values).size !== values.length) {
+    throw new Error("FIREBALL_PUBLIC_ORIGINS must contain one to eight unique origins");
+  }
+  for (const value of values) {
+    let origin: URL;
+    try {
+      origin = new URL(value);
+    } catch {
+      throw new Error("FIREBALL_PUBLIC_ORIGINS contains an invalid URL");
+    }
+    if (
+      origin.origin !== value
+      || origin.username !== ""
+      || origin.password !== ""
+      || (nodeEnvironment === "production" && origin.protocol !== "https:")
+      || (nodeEnvironment !== "production" && !["http:", "https:"].includes(origin.protocol))
+    ) {
+      throw new Error("FIREBALL_PUBLIC_ORIGINS contains an unsafe origin");
+    }
+  }
+  return new Set(values);
 }
 
 function isLoopback(value: string): boolean {

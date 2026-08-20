@@ -6,6 +6,7 @@ import type {
   HostCapacity,
   SessionQuota,
   SessionRecord,
+  SessionView,
   SignalingAuthorization,
   SignalingTokenExchangeResult,
   TenantContext,
@@ -44,6 +45,7 @@ export interface SessionServiceOptions {
   readonly pairingTicketTTLSeconds?: number;
   readonly signalingTokenTTLSeconds?: number;
   readonly now?: () => number;
+  readonly revokeSignalingConnections?: (sessionId: string) => void;
 }
 
 export class SessionService {
@@ -58,6 +60,7 @@ export class SessionService {
   private readonly pairingTicketTTLSeconds: number;
   private readonly signalingTokenTTLSeconds: number;
   private readonly now: () => number;
+  private readonly revokeSignalingConnections: (sessionId: string) => void;
 
   public constructor(
     private readonly runtime: RuntimeAdapter,
@@ -78,6 +81,7 @@ export class SessionService {
       "signaling token TTL",
     );
     this.now = options.now ?? Date.now;
+    this.revokeSignalingConnections = options.revokeSignalingConnections ?? (() => {});
   }
 
   public async create(context: TenantContext): Promise<CreateSessionResult> {
@@ -106,7 +110,7 @@ export class SessionService {
         signalingTokenHashes: new Set<string>(),
       });
       return {
-        session: record,
+        session: toSessionView(record),
         signalingTicket,
         ticketExpiresInSeconds: this.pairingTicketTTLSeconds,
       };
@@ -115,10 +119,10 @@ export class SessionService {
     }
   }
 
-  public get(context: TenantContext, id: string): SessionRecord {
+  public get(context: TenantContext, id: string): SessionView {
     const record = this.sessions.get(this.key(context.tenantId, id));
     if (!record) throw new OrchestratorError("SESSION_NOT_FOUND", "session not found", 404);
-    return record;
+    return toSessionView(record);
   }
 
   public exchangeSignalingTicket(ticket: string): SignalingTokenExchangeResult {
@@ -170,6 +174,7 @@ export class SessionService {
     const record = this.sessions.get(key);
     if (!record) throw new OrchestratorError("SESSION_NOT_FOUND", "session not found", 404);
     this.revokeCredentials(key);
+    this.revokeSignalingConnections(record.id);
     const { failure: _previousFailure, ...cleanRecord } = record;
     this.sessions.set(key, { ...cleanRecord, phase: "burning" });
     try {
@@ -268,4 +273,14 @@ function fitsWithin(quota: SessionQuota, capacity: HostCapacity): boolean {
   return quota.memoryMiB <= capacity.memoryMiB
     && quota.cpuShares <= capacity.cpuShares
     && quota.pids <= capacity.pids;
+}
+
+function toSessionView(record: SessionRecord): SessionView {
+  return {
+    id: record.id,
+    phase: record.phase,
+    createdAt: record.createdAt,
+    quota: record.quota,
+    ...(record.failure === undefined ? {} : { failure: record.failure }),
+  };
 }

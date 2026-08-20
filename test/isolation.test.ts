@@ -16,11 +16,21 @@ test("two tenants receive isolated runtime, storage, network and tickets", async
 
   const alpha = await create(app, "alpha", "alice");
   const beta = await create(app, "beta", "bob");
+  const alphaRuntime = [...runtime.resources.values()].find(
+    (resource) => resource.containerName === `fireball-${alpha.session.id}`,
+  );
+  const betaRuntime = [...runtime.resources.values()].find(
+    (resource) => resource.containerName === `fireball-${beta.session.id}`,
+  );
+  assert.ok(alphaRuntime);
+  assert.ok(betaRuntime);
 
   assert.notEqual(alpha.session.id, beta.session.id);
-  assert.notEqual(alpha.session.runtime.containerId, beta.session.runtime.containerId);
-  assert.notEqual(alpha.session.runtime.networkNamespace, beta.session.runtime.networkNamespace);
-  assert.notEqual(alpha.session.runtime.storageNamespace, beta.session.runtime.storageNamespace);
+  assert.equal("runtime" in alpha.session, false);
+  assert.notEqual(alphaRuntime.containerId, betaRuntime.containerId);
+  assert.notEqual(alphaRuntime.networkNamespace, betaRuntime.networkNamespace);
+  assert.notEqual(alphaRuntime.storageNamespace, betaRuntime.storageNamespace);
+  assert.notEqual(alphaRuntime.signalingSecret, betaRuntime.signalingSecret);
   assert.notEqual(alpha.signalingTicket, beta.signalingTicket);
   assert.equal(runtime.resources.size, 2);
 });

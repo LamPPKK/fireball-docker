@@ -34,9 +34,11 @@ test("pairing ticket exchanges once for a one-use signaling token", async (conte
   assert.equal(replay.json().error.code, "SIGNALING_CREDENTIAL_INVALID");
 
   const authorization = sessions.authorizeSignalingToken(result.signalingToken);
+  const resource = [...runtime.resources.values()][0];
+  assert.ok(resource);
   assert.equal(authorization.sessionId, created.session.id);
   assert.equal(authorization.tenantId, "alpha");
-  assert.equal(authorization.runtime.containerId, created.session.runtime.containerId);
+  assert.equal(authorization.runtime.containerId, resource.containerId);
   assert.throws(
     () => sessions.authorizeSignalingToken(result.signalingToken),
     isInvalidSignalingCredential,
