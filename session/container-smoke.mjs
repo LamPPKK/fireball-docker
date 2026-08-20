@@ -6,12 +6,16 @@ import WebSocket from "ws";
 
 const image = process.argv[2];
 const platform = process.argv[3];
+const appArmorProfile = process.env.FIREBALL_SMOKE_APPARMOR_PROFILE;
 
 if (typeof image !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/@:-]{0,254}$/.test(image)) {
   throw new Error("usage: node container-smoke.mjs <image> [linux/amd64|linux/arm64]");
 }
 if (platform !== undefined && !["linux/amd64", "linux/arm64"].includes(platform)) {
   throw new Error("container smoke platform is unsupported");
+}
+if (appArmorProfile !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(appArmorProfile)) {
+  throw new Error("FIREBALL_SMOKE_APPARMOR_PROFILE is invalid");
 }
 
 const suffix = randomBytes(6).toString("hex");
@@ -21,6 +25,9 @@ let containerCreated = false;
 
 try {
   const platformArguments = platform ? ["--platform", platform] : [];
+  const appArmorArguments = appArmorProfile
+    ? ["--security-opt", `apparmor=${appArmorProfile}`]
+    : [];
   docker([
     "run",
     "--detach",
@@ -30,6 +37,7 @@ try {
     "--read-only",
     "--cap-drop=ALL",
     "--security-opt=no-new-privileges:true",
+    ...appArmorArguments,
     "--pids-limit=128",
     "--memory=512m",
     "--tmpfs",

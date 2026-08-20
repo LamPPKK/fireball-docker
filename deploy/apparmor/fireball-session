@@ -1,0 +1,12 @@
+abi <abi/4.0>,
+
+include <tunables/global>
+
+# Ubuntu 24.04 restricts unprivileged user namespaces for unconfined
+# applications. WPE WebKit uses bubblewrap to create its child-process
+# sandbox, so this named profile grants that one kernel operation while the
+# container remains constrained by Docker namespaces, seccomp, a read-only
+# root filesystem, dropped capabilities and no-new-privileges.
+profile fireball-session flags=(unconfined) {
+  userns,
+}

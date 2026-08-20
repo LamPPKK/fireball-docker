@@ -47,7 +47,10 @@ test("Docker runtime applies the tenant isolation contract", async () => {
   assert.equal(body.Labels["dev.fireball.instance"], "test-instance");
   assert.equal(body.HostConfig.ReadonlyRootfs, true);
   assert.deepEqual(body.HostConfig.CapDrop, ["ALL"]);
-  assert.deepEqual(body.HostConfig.SecurityOpt, ["no-new-privileges:true"]);
+  assert.deepEqual(body.HostConfig.SecurityOpt, [
+    "no-new-privileges:true",
+    "apparmor=fireball-session",
+  ]);
   assert.equal(body.HostConfig.Memory, 512 * 1024 * 1024);
   assert.equal(body.HostConfig.PidsLimit, 128);
   assert.equal(body.HostConfig.NetworkMode, `fireball-net-${request.sessionId}`);
@@ -259,6 +262,7 @@ function makeRuntime(transport: DockerEngineTransport): DockerEngineRuntime {
       apiVersion: "1.47",
       image: "fireball/session-wpe:test",
       instanceId: "test-instance",
+      appArmorProfile: "fireball-session",
       startupHealthAttempts: 3,
       startupHealthIntervalMs: 1,
     },

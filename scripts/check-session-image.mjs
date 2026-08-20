@@ -9,6 +9,7 @@ const packageLock = JSON.parse(await readFile(new URL("../session/package-lock.j
 const supervisor = await readFile(new URL("../session/supervisor.mjs", import.meta.url), "utf8");
 const containerSmoke = await readFile(new URL("../session/container-smoke.mjs", import.meta.url), "utf8");
 const imageWorkflow = await readFile(new URL("../.github/workflows/session-image.yml", import.meta.url), "utf8");
+const appArmorProfile = await readFile(new URL("../deploy/apparmor/fireball-session", import.meta.url), "utf8");
 
 assert.deepEqual(Object.keys(manifest).sort(), [
   "base_image",
@@ -69,5 +70,9 @@ for (const required of [
 }
 assert.match(imageWorkflow, /npm run container:smoke --prefix session/);
 assert.match(imageWorkflow, /actions\/setup-node@v6/);
+assert.match(imageWorkflow, /apparmor_parser -r deploy\/apparmor\/fireball-session/);
+assert.match(appArmorProfile, /profile fireball-session flags=\(unconfined\)/);
+assert.match(appArmorProfile, /\buserns,/);
+assert.doesNotMatch(containerSmoke, /seccomp=unconfined|--privileged/);
 
 process.stdout.write("session image contract is internally consistent\n");

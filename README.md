@@ -59,12 +59,13 @@ FIREBALL_MAX_CPU_SHARES=4096
 FIREBALL_MAX_PIDS=1024
 FIREBALL_SESSION_HEALTH_ATTEMPTS=60
 FIREBALL_SESSION_HEALTH_INTERVAL_MS=1000
+FIREBALL_SESSION_APPARMOR_PROFILE=fireball-session
 DOCKER_SOCKET=/var/run/docker.sock
 DOCKER_API_VERSION=1.47
 FIREBALL_SESSION_IMAGE=ghcr.io/lamppkk/fireball-session@sha256:<promoted-64-hex-digest>
 ```
 
-`FIREBALL_INSTANCE_ID` is required in production and scopes restart cleanup. Two simultaneously running orchestrators must never share it because either process may reap resources owned by that instance during startup. `FIREBALL_PUBLIC_ORIGINS` accepts one to eight comma-separated exact HTTPS origins. `FIREBALL_SESSION_IMAGE` is also required in production and must end in an immutable `sha256` digest; a mutable tag is rejected before startup. The current signaling slice requires the orchestrator process to share the Docker host network namespace so it can reach a random port bound strictly to `127.0.0.1`; a container-to-container private-network adapter remains future work. OIDC issuer matching is exact. The default JWT allowlist is `RS256`, `PS256`, and `ES256`; symmetric JWT algorithms are rejected. Reverse proxy TLS and rate limiting remain deployment requirements.
+`FIREBALL_INSTANCE_ID` is required in production and scopes restart cleanup. Two simultaneously running orchestrators must never share it because either process may reap resources owned by that instance during startup. `FIREBALL_PUBLIC_ORIGINS` accepts one to eight comma-separated exact HTTPS origins. `FIREBALL_SESSION_IMAGE` is also required in production and must end in an immutable `sha256` digest; a mutable tag is rejected before startup. On Ubuntu 24.04 hosts, load [`deploy/apparmor/fireball-session`](deploy/apparmor/fireball-session) and set `FIREBALL_SESSION_APPARMOR_PROFILE=fireball-session` so WPE's bubblewrap sandbox may create its nested user namespace; do not disable the WebKit sandbox or globally disable the host restriction. Omit the setting on hosts without AppArmor. The current signaling slice requires the orchestrator process to share the Docker host network namespace so it can reach a random port bound strictly to `127.0.0.1`; a container-to-container private-network adapter remains future work. OIDC issuer matching is exact. The default JWT allowlist is `RS256`, `PS256`, and `ES256`; symmetric JWT algorithms are rejected. Reverse proxy TLS and rate limiting remain deployment requirements.
 
 Access to the Docker Engine socket is effectively host-control authority. Run the orchestrator on a dedicated host, restrict socket access to its service identity, and never expose the socket through the public API container network. When the image runs as its non-root `fireball` user, the deployment must grant only that process the host Docker socket group ID.
 

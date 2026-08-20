@@ -32,6 +32,7 @@ The supervisor removes the bootstrap secret from the GStreamer child environment
 
 - UID/GID `10001` runs the supervisor, WPE WebKit children, and GStreamer pipeline.
 - The root filesystem is read-only and all capabilities are dropped with `no-new-privileges`.
+- Ubuntu 24.04 hosts load the named `fireball-session` AppArmor profile, whose sole purpose is to permit the unprivileged user namespace required by WebKit's bubblewrap child-process sandbox. The image does not disable that sandbox or request an unconfined seccomp profile.
 - Cookie, cache, configuration, GStreamer registry, and runtime state are rooted below `/run/fireball-session`.
 - The portable Docker profile negotiates WPE's system-memory BGRA output before color conversion, avoiding a mandatory EGL/GPU dependency. Hardware/zero-copy profiles remain benchmark-gated deployment variants.
 - Docker mounts that path as a `256 MiB` tmpfs owned by UID/GID `10001`, with `noexec`, `nosuid`, and `nodev`.

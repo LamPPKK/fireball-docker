@@ -17,6 +17,7 @@ export interface DockerEngineOptions {
   readonly apiVersion: string;
   readonly image: string;
   readonly instanceId: string;
+  readonly appArmorProfile?: string;
   readonly startupHealthAttempts?: number;
   readonly startupHealthIntervalMs?: number;
 }
@@ -36,6 +37,9 @@ export class DockerEngineRuntime implements RuntimeAdapter {
     if (!/^\d+\.\d+$/.test(options.apiVersion)) throw new Error("Docker API version must be numeric");
     if (!options.image.trim() || options.image.length > 255) throw new Error("session image must be non-empty");
     if (!isSafeLabelValue(options.instanceId)) throw new Error("orchestrator instance id is invalid");
+    if (options.appArmorProfile !== undefined && !isSafeSecurityProfile(options.appArmorProfile)) {
+      throw new Error("session AppArmor profile is invalid");
+    }
     this.startupHealthAttempts = positiveInteger(options.startupHealthAttempts ?? 60, "startup health attempts");
     this.startupHealthIntervalMs = positiveInteger(
       options.startupHealthIntervalMs ?? 1_000,
@@ -77,7 +81,12 @@ export class DockerEngineRuntime implements RuntimeAdapter {
             NetworkMode: networkNamespace,
             ReadonlyRootfs: true,
             CapDrop: ["ALL"],
-            SecurityOpt: ["no-new-privileges:true"],
+            SecurityOpt: [
+              "no-new-privileges:true",
+              ...(this.options.appArmorProfile === undefined
+                ? []
+                : [`apparmor=${this.options.appArmorProfile}`]),
+            ],
             Tmpfs: {
               "/run/fireball-session": "rw,noexec,nosuid,nodev,size=256m,mode=0700,uid=10001,gid=10001",
             },
@@ -274,6 +283,10 @@ function managedResourceId(
 
 function isSafeLabelValue(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value);
+}
+
+function isSafeSecurityProfile(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value);
 }
 
 function positiveInteger(value: number, name: string): number {

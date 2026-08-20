@@ -50,5 +50,9 @@ jobs:
           cache: npm
           cache-dependency-path: session/package-lock.json
       - run: npm ci --prefix session --ignore-scripts
+      - name: Load WPE user-namespace AppArmor profile
+        run: sudo apparmor_parser -r deploy/apparmor/fireball-session
       - name: Smoke running session container
         run: npm run container:smoke --prefix session -- "fireball/session-wpe:test-${{ matrix.suffix }}" "${{ matrix.platform }}"
+        env:
+          FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
