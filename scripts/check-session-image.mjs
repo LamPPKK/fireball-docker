@@ -219,5 +219,6 @@ assert.match(openh264Installer, /createHash\("sha512"\)/);
 assert.match(openh264Installer, /Content-Length mismatch/);
 assert.match(openh264Installer, /gmpopenh264\.info/);
 assert.match(openh264Installer, /libgmpopenh264\.so/);
+assert.match(openh264Installer, /"gmp-gmpopenh264", manifest\.plugin_version/);
 
 process.stdout.write("session image contract is internally consistent\n");

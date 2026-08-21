@@ -29,23 +29,23 @@ if (command === "check") {
   if (typeof outputArgument !== "string" || !outputArgument.startsWith("/") || outputArgument.includes("\0")) {
     throw new Error("OpenH264 output must be a safe absolute path");
   }
-  const output = resolve(outputArgument);
-  if (output !== outputArgument || output === "/" || output === dirname(output)) {
+  const outputRoot = resolve(outputArgument);
+  if (outputRoot !== outputArgument || outputRoot === "/" || outputRoot === dirname(outputRoot)) {
     throw new Error("OpenH264 output path must already be canonical and non-root");
   }
-  await assertMissing(output);
-  const installed = await installArtifact(manifest.artifacts[platform], output);
+  await assertMissing(outputRoot);
+  const installed = await installArtifact(manifest.artifacts[platform], outputRoot);
   process.stdout.write(`${installed}\n`);
 } else {
   throw new Error("usage: install-firefox-openh264.mjs <check|install> [...]");
 }
 
-async function installArtifact(artifact, output) {
-  const parent = dirname(output);
+async function installArtifact(artifact, outputRoot) {
+  const parent = dirname(outputRoot);
   await mkdir(parent, { recursive: true, mode: 0o700 });
   const staging = await mkdtemp(join(parent, ".fireball-openh264-"));
   const archive = join(staging, "openh264.zip");
-  const extracted = join(staging, "plugin");
+  const extracted = join(staging, "gmp-gmpopenh264", manifest.plugin_version);
   try {
     const response = await fetch(artifact.url, {
       redirect: "error",
@@ -71,7 +71,7 @@ async function installArtifact(artifact, output) {
       .filter(Boolean)
       .sort();
     assert.deepEqual(entries, ["gmpopenh264.info", "libgmpopenh264.so"]);
-    await mkdir(extracted, { mode: 0o755 });
+    await mkdir(extracted, { recursive: true, mode: 0o755 });
     execFileSync("unzip", ["-qq", archive, "-d", extracted], { stdio: "inherit" });
     await validateInstalledFile(join(extracted, "gmpopenh264.info"));
     await validateInstalledFile(join(extracted, "libgmpopenh264.so"));
@@ -80,8 +80,9 @@ async function installArtifact(artifact, output) {
     // codec after the browser process starts.
     await chmod(join(extracted, "gmpopenh264.info"), 0o644);
     await chmod(join(extracted, "libgmpopenh264.so"), 0o755);
-    await rename(extracted, output);
-    return output;
+    await rm(archive);
+    await rename(staging, outputRoot);
+    return join(outputRoot, "gmp-gmpopenh264", manifest.plugin_version);
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
