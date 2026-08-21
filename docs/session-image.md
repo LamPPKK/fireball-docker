@@ -2,7 +2,7 @@
 
 ## Status
 
-The `0.1.0-dev.1` session image is an E1 engineering candidate. Its source contract, bootstrap boundary, Docker lifecycle, two-architecture build/start/smoke gate, real two-tenant infrastructure gate, browser-state isolation, source-revision H.264/Opus/control gate, relay-only TURN gate, restart/crash-containment gate, and exact-digest candidate promotion lane are implemented. It is not a release until a new immutable candidate passes the newly added restart/crash gate and the remaining external deployment gate.
+The `0.1.0-dev.1` session image is an E1 engineering candidate. Its source contract, bootstrap boundary, Docker lifecycle, two-architecture build/start/smoke gate, real two-tenant infrastructure gate, browser-state isolation, H.264/Opus/control gate, relay-only TURN gate, restart/crash-containment gate, and exact-digest candidate promotion lane are implemented and tested. It is not a release until the remaining external deployment gate passes against the same immutable digest.
 
 Workflow run `32442811942` at commit `2cc0ad6` reproduced the previous **NO-GO** under Docker's built-in seccomp profile: the amd64 image and plugins passed, AppArmor was applied without a denial, then bubblewrap failed its first nested namespace creation. Run `32444451863` at commit `bb40440` proved the checksum-locked policy allowed that namespace setup, but Linux then rejected a fresh procfs below Docker's locked `/proc` paths. Run `32445430523` at commit `a8152cb` proved the tenant-PID/read-only-proc wrapper passed compilation, metadata, namespace creation, and the proc boundary; the next fail-closed boundary was bubblewrap's exact second-level `unshare(CLONE_NEWUSER)` for `/dev/pts`.
 
@@ -37,13 +37,11 @@ After QA, Syft produces one SPDX JSON document per platform. The workflow record
 
 The `candidate-<commit>` tag is only a discovery pointer and can be replaced by an explicit rerun. Consumers must deploy the exact index digest from the evidence. QA platform tags are intentionally retained as forensic inputs if a later merge/sign step fails; they are not releases.
 
-Workflow run [`32462226152`](https://github.com/LamPPKK/fireball-docker/actions/runs/32462226152) at commit `d2ec927bb54fefe0875d36a4f8f690c03b31e051` is the current clean **PASS** for this no-rebuild candidate lane, using the commit-pinned Node 24 artifact actions. The arm64 platform job passed in 3 minutes 21 seconds and the amd64 job in 3 minutes 57 seconds; the index validation, attestation, and signing job then passed in 26 seconds. Evidence identifies:
+Workflow run [`32463252052`](https://github.com/LamPPKK/fireball-docker/actions/runs/32463252052) at commit `47e95b434b56b8e19e91a83ef89fd701cf77be18` is the current clean **PASS** for this no-rebuild candidate lane. The amd64 platform job passed in 3 minutes 57 seconds and the arm64 job in 4 minutes 1 second; the index validation, attestation, and signing job then passed in 58 seconds. Both native jobs passed the newly added restart-reconciliation and pipeline-crash-containment step before media, TURN, SBOM, and platform attestation. Evidence identifies:
 
-- `linux/amd64`: `sha256:9363cfdd5ee6b050cab55d2a50611292df97e659dae6e6cb0e1d5eb56b50dca4`
-- `linux/arm64`: `sha256:bbae432948d71ff2b763c2783735f9ba35004eef23be24692eeb41874976ceae`
-- promoted OCI index: `ghcr.io/lamppkk/fireball-session@sha256:c2cbf8afbcbc188471c654b67e6af3b98970cf0040b108bbfb906fb230dda1a3`
-
-That recorded candidate predates the restart/crash-containment gate added afterward. It remains valid evidence for the gates executed by run `32462226152`, but it must not be represented as passing the newer gate. The next candidate run must replace this paragraph's canonical digest before E1 promotion.
+- `linux/amd64`: `sha256:bc6f9d8c84e928d099a81dd3e7d18d0d0792ed3a38cbbc4041af1f91c1807326`
+- `linux/arm64`: `sha256:0483f313a232fc9b304fb21318ee7a3c9fb7cb2ee55494500cd6f69035f06b31`
+- promoted OCI index: `ghcr.io/lamppkk/fireball-session@sha256:a3f95427557c194995f695f14476bf501e261d5a245aae7e7c7ecaa13ed8a961`
 
 The downloaded evidence bundle passed the repository's normative validator again after the workflow completed. Independent `gh attestation verify` checks accepted both the SLSA provenance and `https://fireball.dev/attestations/session-candidate/v1` predicate when locked to `session-candidate.yml` and the source commit. The workflow itself also completed exact-identity Cosign verification.
 
@@ -138,8 +136,7 @@ Promotion additionally requires:
 
 1. Run `session-candidate` from protected `main`; both native platform jobs and the no-rebuild index merge/sign job must pass.
 2. Preserve the emitted exact index digest, platform manifests, SPDX SBOMs, candidate evidence, GitHub attestations, and Cosign identity. Never substitute a tag for that digest.
-3. Require the restart-reconciliation and pipeline-crash-containment step to pass against both exact platform digests. Do not infer this result from candidate run `32462226152`, which predates the step.
-4. Run `nginx -t` and an external TLS/WebSocket handshake against the deployed candidate through the checked adapter.
-5. Promote only that tested digest. Do not rebuild after QA.
+3. Run `nginx -t` and an external TLS/WebSocket handshake against the deployed candidate through the checked adapter.
+4. Promote only that tested digest. Do not rebuild after QA.
 
 The public orchestrator should remain on host loopback behind the rendered Nginx TLS/WebSocket adapter. The adapter source is checked in normal CI, but release evidence must also include `nginx -t` and an external WebSocket handshake against the deployed version.
