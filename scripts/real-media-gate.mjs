@@ -76,7 +76,13 @@ let webdriverSessionId;
 let app;
 
 const pageServer = createServer((request, response) => {
-  if (request.method !== "GET" || !["/", "/index.html"].includes(request.url ?? "")) {
+  let pathname;
+  try {
+    pathname = new URL(request.url ?? "", "http://media-gate.invalid").pathname;
+  } catch {
+    pathname = "";
+  }
+  if (request.method !== "GET" || !["/", "/index.html"].includes(pathname)) {
     response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
     response.end("not found\n");
     return;
@@ -283,11 +289,12 @@ function armBridge(token, sessionId) {
 
 async function runBrowserPass(name) {
   assert.ok(pageOrigin);
+  const passId = `${name}-${randomBytes(4).toString("hex")}`;
   await webDriverRequest(
     webdriver.endpoint,
     "POST",
     `/session/${webdriverSessionId}/url`,
-    { url: `${pageOrigin}/#pass=${encodeURIComponent(name)}-${randomBytes(4).toString("hex")}` },
+    { url: `${pageOrigin}/index.html?pass=${encodeURIComponent(passId)}` },
   );
   const state = await waitFor(async () => {
     const current = await browserState();
@@ -543,11 +550,29 @@ function reportManagedContainerLogs(managedInstance) {
   try {
     for (const container of managedContainers(managedInstance)) {
       const logs = docker(["logs", container.Id], { allowFailure: true });
-      if (logs) process.stderr.write(`--- ${container.Name} logs ---\n${logs}\n`);
+      if (logs) process.stderr.write(`--- ${container.Name} logs (redacted) ---\n${redactContainerLogs(logs)}\n`);
     }
   } catch (error) {
     process.stderr.write(`unable to collect managed container logs: ${errorMessage(error)}\n`);
   }
+}
+
+function redactContainerLogs(logs) {
+  const redacted = logs.split("\n").map((line) => {
+    if (
+      line.includes("Received message")
+      && (line.includes('\\"type\\":\\"peer\\"') || line.includes('\\"type\\":\\"authenticate\\"'))
+    ) {
+      return "[redacted rswebrtc signaling frame]";
+    }
+    return line
+      .replace(/a=ice-ufrag:[^\\\s"]+/giu, "a=ice-ufrag:[redacted]")
+      .replace(/a=ice-pwd:[^\\\s"]+/giu, "a=ice-pwd:[redacted]")
+      .replace(/a=fingerprint:[^\\\r\n"]+/giu, "a=fingerprint:[redacted]")
+      .replace(/candidate:[^\\\r\n"]+/giu, "candidate:[redacted]")
+      .replace(/\b(turns?):\/\/[^@\s"]+@/giu, "$1://[redacted]@");
+  }).join("\n");
+  return redacted.slice(-64 * 1024);
 }
 
 function docker(arguments_, { allowFailure = false } = {}) {

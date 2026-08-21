@@ -198,6 +198,8 @@ for (const required of [
   'assertCommand("firefox"',
   '"media.gmp-gmpopenh264.enabled": true',
   "reportWebDriverDiagnostics()",
+  'index.html?pass=${encodeURIComponent(passId)}',
+  "redactContainerLogs(logs)",
   "new WebSocketSignalingConnector",
   "signalingAllowedOrigins: new Set([pageOrigin])",
   "assertMediaEvidence(first)",
@@ -209,6 +211,7 @@ for (const required of [
   assert.ok(mediaGate.includes(required), `real media gate is missing: ${required}`);
 }
 assert.doesNotMatch(mediaGate, /FIREBALL_SMOKE_ICE_SERVERS_FILE|--privileged|seccomp=unconfined|systempaths=unconfined/);
+assert.doesNotMatch(mediaGate, /\/#pass=/);
 assert.doesNotMatch(mediaFixture, /signalingToken|signalingTicket|[?&](?:token|ticket)=/);
 assert.equal(openh264Manifest.schema_version, 1);
 assert.equal(openh264Manifest.plugin_version, "2.6.0");
