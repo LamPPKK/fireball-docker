@@ -1,6 +1,6 @@
 # TURN and reverse-proxy deployment adapters
 
-These adapters keep deployment credentials outside both Fireball OCI images. They do not make the current session-image candidate a release: the source-revision media/control, relay-only TURN, two-tenant, and browser-state gates pass, but they must be repeated against the exact candidate digest before promotion.
+These adapters keep deployment credentials outside both Fireball OCI images. [`session-candidate` run 32464998826](https://github.com/LamPPKK/fireball-docker/actions/runs/32464998826) repeated the two-tenant, browser-state, restart/crash, Nginx TLS/WebSocket, media/control, and relay-only TURN gates against the exact promoted platform digests before creating `ghcr.io/lamppkk/fireball-session@sha256:70b3836ac5d5802224859b7e8b618bc5c8ab1718f6a9c483511829bcf6d7c364`. This remains a candidate rather than a production deployment: public certificate issuance, DNS, firewall policy, and operator-host soak testing are outside CI.
 
 ## TURN secret file
 
@@ -60,3 +60,9 @@ FIREBALL_PUBLIC_ORIGINS=https://browser.example.com
 ```
 
 If another trusted load balancer sits in front of Nginx, define trusted proxy addresses explicitly before changing source-IP handling. Do not trust arbitrary incoming `X-Forwarded-For` values.
+
+### Exact-digest CI evidence
+
+Each platform job in the candidate workflow runs this adapter against its locked OCI digest before promotion. The gate generates a short-lived certificate with the synthetic SAN `browser.fireball.test`, gives only that certificate to the test client's trust store, resolves the name to loopback, and leaves TLS verification enabled. It requires a successful `nginx -t`, TLS 1.2 or 1.3, HSTS, the expected health response, a 403 for an unapproved WebSocket Origin, an authenticated WSS session, Burn-time closure, stale-ticket rejection, and zero managed Docker residue.
+
+That evidence validates the checked template, TLS/SNI/certificate path, HTTPS routing, WebSocket upgrade, origin policy, and cleanup. It deliberately does not claim a public CA certificate, real DNS propagation, Internet exposure, production firewall configuration, or long-running host health. Operators must verify those conditions separately while deploying the recorded index digest rather than its mutable discovery tag.

@@ -1,6 +1,6 @@
 # fireball-docker
 
-Fireball's multi-tenant remote-browser orchestrator. The repository is now at the first E1 security slice: production OIDC authentication, one-session-per-tenant isolation, an authenticated WebSocket signaling relay, a buildable WPE/GStreamer session-image candidate, transactional Docker Engine lifecycle management, and fail-closed restart reconciliation.
+Fireball's multi-tenant remote-browser orchestrator. The repository has completed the one-session-per-tenant E1 candidate gate: production OIDC authentication, authenticated WebSocket signaling, WPE/GStreamer media and control, transactional Docker Engine lifecycle, fail-closed restart reconciliation, exact-digest multi-architecture promotion, and a real Nginx TLS/WebSocket deployment check. Multi-tab support inside a tenant container is the next E1 slice.
 
 ## Implemented boundary
 
@@ -44,7 +44,7 @@ Tickets and tokens are never accepted in query strings. A reconnect ticket can o
 
 This is an engineering candidate, not a promoted release. The normal CI validates source, contracts, authentication behavior, deployment-adapter configuration, and image provenance. [`session-image` run 32459386522](https://github.com/LamPPKK/fireball-docker/actions/runs/32459386522) passed the complete source-revision gate on native `linux/amd64` and `linux/arm64` runners at commit `38918f8fd792bb9c410f4d7ae75b1ff1845535ae`. Both jobs built and inspected the image, passed the real two-tenant infrastructure gate, proved cookie/localStorage/service-worker separation and burn cleanup in real WPE, and completed two authenticated Direct connections plus two relay-only connections through an ephemeral coturn service. Every browser connection required H.264 video, Opus audio, decoded frames, and a control DataChannel response; the TURN gate additionally required the selected local and remote ICE candidates to both be `relay`. Reconnect used newly issued one-use credentials; burn then closed signaling, revoked a remaining ticket, and left no managed container or network. The gate proves source-revision isolation, media/control, and TURN behavior, but it is not a bitrate/latency/thermal benchmark and does not promote an exact OCI digest.
 
-The manual `session-candidate` workflow implements the immutable promotion lane without rebuilding after QA. Each native runner pushes one commit-scoped platform image, resolves its registry manifest digest, pulls and tests that exact digest through every current image/isolation/browser-state/restart-crash/Direct/TURN gate, emits an SPDX SBOM, and attaches platform provenance plus SBOM attestations. Only after both jobs pass does the merge job create `ghcr.io/lamppkk/fireball-session:candidate-<commit>` from those two digests, validate the raw two-platform OCI index, emit strict candidate evidence, attach index provenance and evidence attestations, and sign the index digest with GitHub OIDC/Cosign. All third-party actions are pinned by commit. [`session-candidate` run 32463252052](https://github.com/LamPPKK/fireball-docker/actions/runs/32463252052) passed this lane at commit `47e95b434b56b8e19e91a83ef89fd701cf77be18`; the resulting index is `ghcr.io/lamppkk/fireball-session@sha256:a3f95427557c194995f695f14476bf501e261d5a245aae7e7c7ecaa13ed8a961`. The tag is a discovery aid; deployment must use this recorded digest identity. See [the session-image architecture and promotion gates](docs/session-image.md).
+The manual `session-candidate` workflow implements the immutable promotion lane without rebuilding after QA. Each native runner pushes one commit-scoped platform image, resolves its registry manifest digest, pulls and tests that exact digest through every current image/isolation/browser-state/restart-crash/Nginx-TLS/Direct/TURN gate, emits an SPDX SBOM, and attaches platform provenance plus SBOM attestations. Only after both jobs pass does the merge job create `ghcr.io/lamppkk/fireball-session:candidate-<commit>` from those two digests, validate the raw two-platform OCI index, emit strict candidate evidence, attach index provenance and evidence attestations, and sign the index digest with GitHub OIDC/Cosign. All third-party actions are pinned by commit. [`session-candidate` run 32464998826](https://github.com/LamPPKK/fireball-docker/actions/runs/32464998826) passed this lane at commit `1fd15b3343cd5505ce2b92da99e2f0fb467ebfc1`; the resulting index is `ghcr.io/lamppkk/fireball-session@sha256:70b3836ac5d5802224859b7e8b618bc5c8ab1718f6a9c483511829bcf6d7c364`. The tag is a discovery aid; deployment must use this recorded digest identity. See [the session-image architecture and promotion gates](docs/session-image.md).
 
 ## Production configuration
 
@@ -110,9 +110,10 @@ non-loopback listener.
 There is no user-facing Docker dashboard in this repository yet, so API output
 or Docker Desktop screenshots are not presented as product UI.
 
-## E1 work still open
+## Next E1 slice
 
-- Exercise `nginx -t` and an external TLS/WebSocket handshake against that same digest; source-only adapter tests do not replace this deployment gate.
-- Open multi-tab APIs only after that isolation gate passes.
+- Add real create/list/activate/delete tab operations inside one tenant container without weakening the one-container-per-tenant boundary.
+- Surface a stopped or crashed runtime as an explicit session failure instead of reporting the last in-memory `active` snapshot until Burn.
+- Keep production certificate issuance, public DNS, firewall policy, and operator-host soak testing as deployment gates; CI validates the checked Nginx path with an explicitly trusted short-lived test certificate, not a public CA.
 
 The versioned XanhTab API snapshot remains frozen. Regenerate it only after an explicitly promoted upstream artifact.

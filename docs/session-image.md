@@ -2,7 +2,7 @@
 
 ## Status
 
-The `0.1.0-dev.1` session image is an E1 engineering candidate. Its source contract, bootstrap boundary, Docker lifecycle, two-architecture build/start/smoke gate, real two-tenant infrastructure gate, browser-state isolation, H.264/Opus/control gate, relay-only TURN gate, restart/crash-containment gate, and exact-digest candidate promotion lane are implemented and tested. It is not a release until the remaining external deployment gate passes against the same immutable digest.
+The `0.1.0-dev.1` session image is an E1 engineering candidate. Its source contract, bootstrap boundary, Docker lifecycle, two-architecture build/start/smoke gate, real two-tenant infrastructure gate, browser-state isolation, H.264/Opus/control gate, relay-only TURN gate, restart/crash-containment gate, exact-digest Nginx TLS/WebSocket gate, and no-rebuild candidate promotion lane are implemented and tested. The one-session-per-tenant E1 candidate gate is complete. This is still not a production release: public certificate issuance, DNS, firewall policy, operator-host soak testing, and the follow-on multi-tab runtime are separate work.
 
 Workflow run `32442811942` at commit `2cc0ad6` reproduced the previous **NO-GO** under Docker's built-in seccomp profile: the amd64 image and plugins passed, AppArmor was applied without a denial, then bubblewrap failed its first nested namespace creation. Run `32444451863` at commit `bb40440` proved the checksum-locked policy allowed that namespace setup, but Linux then rejected a fresh procfs below Docker's locked `/proc` paths. Run `32445430523` at commit `a8152cb` proved the tenant-PID/read-only-proc wrapper passed compilation, metadata, namespace creation, and the proc boundary; the next fail-closed boundary was bubblewrap's exact second-level `unshare(CLONE_NEWUSER)` for `/dev/pts`.
 
@@ -29,7 +29,7 @@ The development build still resolves Debian security packages during the build. 
 
 ### Exact-digest candidate lane
 
-`.github/workflows/session-candidate.yml` is manual, runs only from `main`, and does not publish `latest`. It uses native Ubuntu 24.04 amd64 and arm64 runners. Each matrix job builds the `release` target once, pushes a commit-scoped QA tag, locks the raw registry manifest by SHA-256, and aliases only that pulled digest for testing. A separate browser-state fixture layer uses `FROM <exact digest>` and is never part of the promoted image. The complete single-container, two-tenant, browser-state, restart reconciliation, pipeline-crash containment, Direct-media, relay-only TURN, reconnect, burn, ticket-revocation, and residue suite therefore evaluates the same platform manifest later placed in the multi-platform index.
+`.github/workflows/session-candidate.yml` is manual, runs only from `main`, and does not publish `latest`. It uses native Ubuntu 24.04 amd64 and arm64 runners. Each matrix job builds the `release` target once, pushes a commit-scoped QA tag, locks the raw registry manifest by SHA-256, and aliases only that pulled digest for testing. A separate browser-state fixture layer uses `FROM <exact digest>` and is never part of the promoted image. The complete single-container, two-tenant, browser-state, restart reconciliation, pipeline-crash containment, Nginx TLS/WebSocket, Direct-media, relay-only TURN, reconnect, burn, ticket-revocation, and residue suite therefore evaluates the same platform manifest later placed in the multi-platform index.
 
 After QA, Syft produces one SPDX JSON document per platform. The workflow records the exact manifest bytes, SBOM checksum/size, source commit, and platform in a strict record; it then attaches GitHub build-provenance and SBOM attestations to that platform digest. Only after both matrix jobs succeed may the merge job run `imagetools create` over the two recorded digests. The validator requires exactly `linux/amd64` and `linux/arm64`, rejects extra descriptors and digest drift, hashes the raw OCI index, and binds that digest to repository, commit, workflow run/attempt, candidate tag, platform manifests, and SBOMs in `candidate-evidence.json`.
 
@@ -37,24 +37,37 @@ After QA, Syft produces one SPDX JSON document per platform. The workflow record
 
 The `candidate-<commit>` tag is only a discovery pointer and can be replaced by an explicit rerun. Consumers must deploy the exact index digest from the evidence. QA platform tags are intentionally retained as forensic inputs if a later merge/sign step fails; they are not releases.
 
-Workflow run [`32463252052`](https://github.com/LamPPKK/fireball-docker/actions/runs/32463252052) at commit `47e95b434b56b8e19e91a83ef89fd701cf77be18` is the current clean **PASS** for this no-rebuild candidate lane. The amd64 platform job passed in 3 minutes 57 seconds and the arm64 job in 4 minutes 1 second; the index validation, attestation, and signing job then passed in 58 seconds. Both native jobs passed the newly added restart-reconciliation and pipeline-crash-containment step before media, TURN, SBOM, and platform attestation. Evidence identifies:
+Workflow run [`32464998826`](https://github.com/LamPPKK/fireball-docker/actions/runs/32464998826) at commit `1fd15b3343cd5505ce2b92da99e2f0fb467ebfc1` is the current clean **PASS** for this no-rebuild candidate lane. The amd64 platform job passed in 3 minutes 36 seconds and the arm64 job in 4 minutes 53 seconds; the index validation, attestation, and signing job then passed in 48 seconds. Both native jobs passed restart reconciliation, pipeline-crash containment, a real `nginx -t`, verified TLS 1.2/1.3 HTTP and authenticated WebSocket routing, media/control, relay-only TURN, SBOM, and platform attestation against their locked platform digest. Evidence identifies:
 
-- `linux/amd64`: `sha256:bc6f9d8c84e928d099a81dd3e7d18d0d0792ed3a38cbbc4041af1f91c1807326`
-- `linux/arm64`: `sha256:0483f313a232fc9b304fb21318ee7a3c9fb7cb2ee55494500cd6f69035f06b31`
-- promoted OCI index: `ghcr.io/lamppkk/fireball-session@sha256:a3f95427557c194995f695f14476bf501e261d5a245aae7e7c7ecaa13ed8a961`
+- `linux/amd64`: `sha256:19cd3fec9e939ffc8aab8907f28d17436b699f9d93ae3a509993edcef9e5bbc5`
+- `linux/arm64`: `sha256:871389a409a03393d6b9a8b60fcbeca185074dac461483807cc03641a8248a97`
+- promoted OCI index: `ghcr.io/lamppkk/fireball-session@sha256:70b3836ac5d5802224859b7e8b618bc5c8ab1718f6a9c483511829bcf6d7c364`
 
-The downloaded evidence bundle passed the repository's normative validator again after the workflow completed. Independent `gh attestation verify` checks accepted both the SLSA provenance and `https://fireball.dev/attestations/session-candidate/v1` predicate when locked to `session-candidate.yml` and the source commit. The workflow itself also completed exact-identity Cosign verification.
+The downloaded evidence bundle passed the repository's normative validator again after the workflow completed. Independent predicate-filtered `gh attestation verify` checks accepted both the SLSA provenance and `https://fireball.dev/attestations/session-candidate/v1` predicate when locked to `session-candidate.yml` and the source commit. Filtering avoids treating the separate Cosign public-good signature stored beside the GitHub attestations as a GitHub Actions bundle. The workflow itself also completed exact-identity Cosign verification.
 
-After a successful run, verify both GitHub attestations and the independent Cosign signature:
+After a successful run, download each GitHub predicate into a separate directory, verify its bundle, and then verify the independent Cosign signature:
 
 ```sh
 candidate="ghcr.io/lamppkk/fireball-session@sha256:<INDEX_DIGEST>"
+bundle="sha256:<INDEX_HEX>.jsonl"
 
-gh attestation verify "oci://$candidate" \
-  --repo LamPPKK/fireball-docker
+mkdir -p /tmp/fireball-provenance /tmp/fireball-evidence
+(cd /tmp/fireball-provenance && gh attestation download "oci://$candidate" \
+  --repo LamPPKK/fireball-docker \
+  --predicate-type "https://slsa.dev/provenance/v1")
+(cd /tmp/fireball-evidence && gh attestation download "oci://$candidate" \
+  --repo LamPPKK/fireball-docker \
+  --predicate-type "https://fireball.dev/attestations/session-candidate/v1")
 
 gh attestation verify "oci://$candidate" \
   --repo LamPPKK/fireball-docker \
+  --bundle "/tmp/fireball-provenance/$bundle" \
+  --signer-workflow "LamPPKK/fireball-docker/.github/workflows/session-candidate.yml" \
+  --source-digest "<SOURCE_COMMIT>"
+
+gh attestation verify "oci://$candidate" \
+  --repo LamPPKK/fireball-docker \
+  --bundle "/tmp/fireball-evidence/$bundle" \
   --predicate-type "https://fireball.dev/attestations/session-candidate/v1" \
   --signer-workflow "LamPPKK/fireball-docker/.github/workflows/session-candidate.yml" \
   --source-digest "<SOURCE_COMMIT>"
@@ -82,7 +95,7 @@ The public one-use signaling token is consumed by the orchestrator and never rea
 
 The supervisor removes the bootstrap secret and ICE file path from the GStreamer child environment. The rswebrtc embedded web server and public STUN default are disabled. Port `8443` is loopback-only inside the container; Docker publishes only port `8444`, and only on host `127.0.0.1` with a random port.
 
-An operator may configure TURN through the [deployment adapter](deployment-adapters.md). The Docker API mounts the host file read-only at `/run/fireball-secrets/ice-servers.json`; no TURN URL is placed in the image or container environment. Before starting GStreamer, the non-root supervisor checks the file size, owner, group, mode, schema, URL form, unique-server bound, and ICE policy. GStreamer receives the validated `stun-server`, `turn-servers`, and `ice-transport-policy` properties. The source-revision workflow now proves real coturn allocation and relay-only media/control; repeating that gate against the exact candidate digest remains a promotion requirement.
+An operator may configure TURN through the [deployment adapter](deployment-adapters.md). The Docker API mounts the host file read-only at `/run/fireball-secrets/ice-servers.json`; no TURN URL is placed in the image or container environment. Before starting GStreamer, the non-root supervisor checks the file size, owner, group, mode, schema, URL form, unique-server bound, and ICE policy. GStreamer receives the validated `stun-server`, `turn-servers`, and `ice-transport-policy` properties. The exact-digest candidate workflow proves real coturn allocation and relay-only media/control on both promoted platform manifests.
 
 ## Storage and process policy
 
@@ -119,7 +132,7 @@ npm ci --prefix session --ignore-scripts
 npm run check
 ```
 
-The `session-image` GitHub workflow builds and loads each architecture independently under Buildx on GitHub's native Ubuntu 24.04 x86_64 and arm64 runners, then checks `wpesrc`, `webrtcsink`, `openh264enc`, GLES runtime resolution, the non-root user, supervisor syntax, and embedded component versions. It rejects an ICE fixture with unsafe permissions, then starts the image with a valid read-only TURN fixture plus the production read-only/capability/tmpfs restrictions. The single-container smoke waits for Docker health, proving the pinned GStreamer build parses the TURN properties, verifies loopback-only signaling, rejects a bad bootstrap secret and a second controller, and proves the controller lease can reconnect before removing the container. The two-tenant smoke then uses the compiled orchestrator and real Docker Engine to verify ownership denial, credential/session binding, container and namespace separation, process/tmpfs/network probes, confinement, quotas, revocation, and cleanup. A CI-only stage derived from the same runtime adds a loopback origin; two concurrent WPE instances prove cookie, localStorage, and service-worker separation, then burn/recreate proves no browser-state residue. The restart/crash gate abandons a live session, recreates the orchestrator with the same instance identity, requires exact resource reconciliation and rejection of the old session/ticket, then kills the live GStreamer pipeline and requires relay closure, non-zero/no-restart container termination, Burn cleanup, ticket revocation, and a healthy replacement session. The Direct browser media smoke performs two authenticated Firefox page loads and requires H.264 and Opus negotiation, RTP packets, decoded video frames, a navigation DataChannel response, reconnect credential rotation, burn revocation, and zero managed Docker residue. A separate gate starts an ephemeral coturn service, installs short-lived root-owned credentials, verifies the parsed relay-only policy and UDP reachability from the exact tenant namespace, and repeats the complete media/control sequence twice while requiring the selected candidate pair to be relay-to-relay. Failure diagnostics redact TURN credentials, rswebrtc peer signaling frames, and ICE/DTLS material.
+The `session-image` GitHub workflow builds and loads each architecture independently under Buildx on GitHub's native Ubuntu 24.04 x86_64 and arm64 runners, then checks `wpesrc`, `webrtcsink`, `openh264enc`, GLES runtime resolution, the non-root user, supervisor syntax, and embedded component versions. It rejects an ICE fixture with unsafe permissions, then starts the image with a valid read-only TURN fixture plus the production read-only/capability/tmpfs restrictions. The single-container smoke waits for Docker health, proving the pinned GStreamer build parses the TURN properties, verifies loopback-only signaling, rejects a bad bootstrap secret and a second controller, and proves the controller lease can reconnect before removing the container. The two-tenant smoke then uses the compiled orchestrator and real Docker Engine to verify ownership denial, credential/session binding, container and namespace separation, process/tmpfs/network probes, confinement, quotas, revocation, and cleanup. A CI-only stage derived from the same runtime adds a loopback origin; two concurrent WPE instances prove cookie, localStorage, and service-worker separation, then burn/recreate proves no browser-state residue. The restart/crash gate abandons a live session, recreates the orchestrator with the same instance identity, requires exact resource reconciliation and rejection of the old session/ticket, then kills the live GStreamer pipeline and requires relay closure, non-zero/no-restart container termination, Burn cleanup, ticket revocation, and a healthy replacement session. The Nginx gate renders the production template, runs a real `nginx -t`, terminates TLS with a short-lived SAN certificate trusted explicitly by the test client, verifies HSTS and TLS 1.2/1.3, rejects a wrong WebSocket Origin, exchanges credentials through HTTPS, and proves authenticated WSS closure and cleanup after Burn. The Direct browser media smoke performs two authenticated Firefox page loads and requires H.264 and Opus negotiation, RTP packets, decoded video frames, a navigation DataChannel response, reconnect credential rotation, burn revocation, and zero managed Docker residue. A separate gate starts an ephemeral coturn service, installs short-lived root-owned credentials, verifies the parsed relay-only policy and UDP reachability from the exact tenant namespace, and repeats the complete media/control sequence twice while requiring the selected candidate pair to be relay-to-relay. Failure diagnostics redact TURN credentials, rswebrtc peer signaling frames, and ICE/DTLS material.
 
 Install the reviewed host policy without changing its bytes:
 
@@ -132,11 +145,11 @@ sudo install -o root -g root -m 0444 \
 
 Set `FIREBALL_SESSION_SECCOMP_PROFILE=/etc/fireball/fireball-session-seccomp.json`. The orchestrator opens it without following a final symlink, checks regular-file type, size, ownership, mode, read-time metadata stability, and the exact reviewed SHA-256 before sending compact JSON to Docker Engine. Any mismatch aborts production startup.
 
-Promotion additionally requires:
+Candidate promotion requires:
 
 1. Run `session-candidate` from protected `main`; both native platform jobs and the no-rebuild index merge/sign job must pass.
 2. Preserve the emitted exact index digest, platform manifests, SPDX SBOMs, candidate evidence, GitHub attestations, and Cosign identity. Never substitute a tag for that digest.
-3. Run `nginx -t` and an external TLS/WebSocket handshake against the deployed candidate through the checked adapter.
-4. Promote only that tested digest. Do not rebuild after QA.
+3. Require the exact-platform `nginx -t` and verified external TLS/WebSocket steps to pass before the index job can start.
+4. Promote only those tested platform digests. Do not rebuild after QA.
 
-The public orchestrator should remain on host loopback behind the rendered Nginx TLS/WebSocket adapter. The adapter source is checked in normal CI, but release evidence must also include `nginx -t` and an external WebSocket handshake against the deployed version.
+The public orchestrator should remain on host loopback behind the rendered Nginx TLS/WebSocket adapter. CI exercises that path with a short-lived self-signed SAN certificate and an explicit test trust root; it proves certificate validation and proxy behavior, not public CA issuance, production DNS, firewall policy, or operator-host soak health. Those remain production deployment gates for the exact recorded digest.
