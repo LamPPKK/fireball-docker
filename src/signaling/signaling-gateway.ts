@@ -73,7 +73,7 @@ export class SignalingGateway {
     const connectUpstream = async (token: string): Promise<void> => {
       let authorization;
       try {
-        authorization = this.sessions.authorizeSignalingToken(token);
+        authorization = await this.sessions.authorizeSignalingToken(token);
       } catch (error) {
         if (error instanceof OrchestratorError) {
           shutdown(1008, "authentication failed");

@@ -277,6 +277,46 @@ test("Docker runtime cleanup is idempotent when resources are already absent", a
   assert.deepEqual(transport.calls[1]?.acceptedStatusCodes, [204, 404]);
 });
 
+test("Docker runtime distinguishes running, stopped, and missing containers", async () => {
+  const resource = tabResource(49_152);
+  const labels = ownershipLabels("test-instance");
+  const transport = new RecordingTransport([
+    [{ Id: resource.containerId, Labels: labels, State: "running" }],
+    [{ Id: resource.containerId, Labels: labels, State: "exited" }],
+    [],
+  ]);
+  const runtime = makeRuntime(transport);
+
+  assert.deepEqual(await runtime.inspect(resource), { state: "running" });
+  assert.deepEqual(await runtime.inspect(resource), {
+    state: "failed",
+    failure: "runtime stopped unexpectedly",
+  });
+  assert.deepEqual(await runtime.inspect(resource), {
+    state: "failed",
+    failure: "runtime container is missing",
+  });
+  assert.equal(transport.calls.every((call) => call.acceptedStatusCodes.join(",") === "200"), true);
+  assert.equal(transport.calls.every((call) => call.path.includes("containers/json?all=true&filters=")), true);
+});
+
+test("Docker runtime fails closed on ambiguous or foreign status responses", async () => {
+  const resource = tabResource(49_152);
+  const runtime = makeRuntime(new RecordingTransport([
+    [{ Id: resource.containerId, Labels: ownershipLabels("foreign-instance"), State: "running" }],
+    [{ Id: resource.containerId, Labels: ownershipLabels("test-instance"), State: "unknown" }],
+  ]));
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(
+      runtime.inspect(resource),
+      (error: unknown) => error instanceof OrchestratorError
+        && error.code === "RUNTIME_FAILURE"
+        && error.message === "Docker Engine returned an invalid runtime status",
+    );
+  }
+});
+
 test("startup reconciliation removes only resources owned by this orchestrator instance", async () => {
   const transport = new RecordingTransport([
     [

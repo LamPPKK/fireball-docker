@@ -94,8 +94,9 @@ try {
   assert.notEqual(stopped.State?.ExitCode, 0, "crashed pipeline container exited successfully");
   assert.equal(stopped.RestartCount, 0, "Docker restarted a failed session container");
 
-  await burnSession("crash", "bob", crashed.session.id);
+  await expectSessionFailed("crash", "bob", crashed.session.id, "runtime stopped unexpectedly");
   await expectTicketRevoked(staleTicket.signalingTicket);
+  await burnSession("crash", "bob", crashed.session.id);
   assertNoResidue("pipeline crash burn");
 
   const recovered = await createSession("crash", "bob");
@@ -200,6 +201,18 @@ async function expectSessionMissing(tenant, subject, sessionId) {
     headers: authorization(tenant, subject),
   });
   assert.equal(response.status, 404, "abandoned session survived orchestrator restart");
+}
+
+async function expectSessionFailed(tenant, subject, sessionId, failure) {
+  const response = await request(`/orchestrator/v1/sessions/${sessionId}`, {
+    method: "GET",
+    headers: authorization(tenant, subject),
+  });
+  await assertResponseStatus(response, 200);
+  const body = await response.json();
+  assert.equal(body.session?.id, sessionId, "failed session response changed identity");
+  assert.equal(body.session?.phase, "failed", "stopped runtime remained active in the public API");
+  assert.equal(body.session?.failure, failure, "stopped runtime returned an unexpected failure reason");
 }
 
 async function expectTicketRevoked(ticket) {

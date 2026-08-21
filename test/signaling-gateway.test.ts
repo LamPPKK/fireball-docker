@@ -10,6 +10,7 @@ import type {
   CreateRuntimeRequest,
   ReconciliationResult,
   RuntimeAdapter,
+  RuntimeInspection,
 } from "../src/runtime/runtime-adapter.js";
 import { SignalingConnectionRegistry } from "../src/signaling/connection-registry.js";
 import { SignalingGateway } from "../src/signaling/signaling-gateway.js";
@@ -34,7 +35,7 @@ test("signaling relay authenticates both hops, relays frames, and burn closes th
   await app.ready();
 
   const created = await sessions.create({ tenantId: "alpha", subject: "alice" });
-  const exchanged = sessions.exchangeSignalingTicket(created.signalingTicket);
+  const exchanged = await sessions.exchangeSignalingTicket(created.signalingTicket);
   const client = await app.injectWS("/orchestrator/v1/signaling", { headers: { origin } });
   context.after(async () => {
     client.terminate();
@@ -76,7 +77,7 @@ test("signaling relay preserves an upstream frame sent during authenticated hand
   });
   await app.ready();
   const created = await sessions.create({ tenantId: "alpha", subject: "alice" });
-  const exchanged = sessions.exchangeSignalingTicket(created.signalingTicket);
+  const exchanged = await sessions.exchangeSignalingTicket(created.signalingTicket);
   const client = await app.injectWS("/orchestrator/v1/signaling", { headers: { origin } });
   context.after(async () => {
     client.terminate();
@@ -156,7 +157,7 @@ test("signaling relay rejects a frame that would exceed its backpressure budget"
   });
   await app.ready();
   const created = await sessions.create({ tenantId: "alpha", subject: "alice" });
-  const exchanged = sessions.exchangeSignalingTicket(created.signalingTicket);
+  const exchanged = await sessions.exchangeSignalingTicket(created.signalingTicket);
   const client = await app.injectWS("/orchestrator/v1/signaling", { headers: { origin } });
   context.after(async () => {
     client.terminate();
@@ -241,6 +242,10 @@ class FixedRuntime implements RuntimeAdapter {
 
   public async destroy(_resource: RuntimeResource): Promise<void> {
     this.destroyed = true;
+  }
+
+  public async inspect(_resource: RuntimeResource): Promise<RuntimeInspection> {
+    return { state: "running" };
   }
 
   public async reconcile(): Promise<ReconciliationResult> {

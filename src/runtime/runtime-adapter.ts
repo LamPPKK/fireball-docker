@@ -11,8 +11,16 @@ export interface ReconciliationResult {
   readonly networksRemoved: number;
 }
 
+export type RuntimeInspection =
+  | { readonly state: "running" }
+  | {
+    readonly state: "failed";
+    readonly failure: "runtime stopped unexpectedly" | "runtime container is missing";
+  };
+
 export interface RuntimeAdapter {
   create(request: CreateRuntimeRequest): Promise<RuntimeResource>;
+  inspect(resource: RuntimeResource): Promise<RuntimeInspection>;
   destroy(resource: RuntimeResource): Promise<void>;
   reconcile(): Promise<ReconciliationResult>;
   listTabs(resource: RuntimeResource): Promise<readonly TabView[]>;

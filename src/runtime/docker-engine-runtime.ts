@@ -13,7 +13,12 @@ import {
   type DockerEngineTransport,
   type DockerNetworkSummary,
 } from "./docker-engine-transport.js";
-import type { CreateRuntimeRequest, ReconciliationResult, RuntimeAdapter } from "./runtime-adapter.js";
+import type {
+  CreateRuntimeRequest,
+  ReconciliationResult,
+  RuntimeAdapter,
+  RuntimeInspection,
+} from "./runtime-adapter.js";
 import { validateProfileShape } from "./seccomp-profile.js";
 
 export interface DockerEngineOptions {
@@ -197,6 +202,37 @@ export class DockerEngineRuntime implements RuntimeAdapter {
     if (failures.length > 0) {
       throw new OrchestratorError("RUNTIME_FAILURE", failures.join("; "), 503);
     }
+  }
+
+  public async inspect(resource: RuntimeResource): Promise<RuntimeInspection> {
+    const response = await this.call<unknown>(
+      "GET",
+      `/v${this.options.apiVersion}/containers/json?all=true&filters=${runtimeFilter(
+        resource.containerId,
+        this.options.instanceId,
+      )}`,
+      [200],
+    );
+    if (!Array.isArray(response)) {
+      throw new OrchestratorError("RUNTIME_FAILURE", "Docker Engine returned an invalid runtime status", 503);
+    }
+    const exact = response.filter((value): value is DockerContainerSummary => {
+      if (!isObject(value) || value.Id !== resource.containerId) return false;
+      return true;
+    });
+    if (exact.length === 0) {
+      return { state: "failed", failure: "runtime container is missing" };
+    }
+    const container = exact[0];
+    if (exact.length !== 1 || !container || !isOwnedRuntime(container, this.options.instanceId)) {
+      throw new OrchestratorError("RUNTIME_FAILURE", "Docker Engine returned an invalid runtime status", 503);
+    }
+    const state = container.State;
+    if (state === "running") return { state: "running" };
+    if (["created", "paused", "restarting", "removing", "exited", "dead"].includes(state ?? "")) {
+      return { state: "failed", failure: "runtime stopped unexpectedly" };
+    }
+    throw new OrchestratorError("RUNTIME_FAILURE", "Docker Engine returned an invalid runtime status", 503);
   }
 
   public async reconcile(): Promise<ReconciliationResult> {
@@ -415,6 +451,18 @@ function ownershipFilter(instanceId: string): string {
   return encodeURIComponent(JSON.stringify({
     label: ["dev.fireball.managed=true", `dev.fireball.instance=${instanceId}`],
   }));
+}
+
+function runtimeFilter(containerId: string, instanceId: string): string {
+  return encodeURIComponent(JSON.stringify({
+    id: [containerId],
+    label: ["dev.fireball.managed=true", `dev.fireball.instance=${instanceId}`],
+  }));
+}
+
+function isOwnedRuntime(resource: DockerContainerSummary, instanceId: string): boolean {
+  return resource.Labels?.["dev.fireball.managed"] === "true"
+    && resource.Labels["dev.fireball.instance"] === instanceId;
 }
 
 function managedResourceId(

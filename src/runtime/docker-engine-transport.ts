@@ -11,6 +11,7 @@ export interface DockerEngineResponse {
 export interface DockerContainerSummary {
   readonly Id?: string;
   readonly Labels?: Record<string, string>;
+  readonly State?: string;
 }
 
 export interface DockerNetworkSummary {

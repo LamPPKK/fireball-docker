@@ -2,7 +2,12 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import { OrchestratorError } from "../domain/errors.js";
 import type { RuntimeResource, TabView } from "../domain/types.js";
-import type { CreateRuntimeRequest, ReconciliationResult, RuntimeAdapter } from "./runtime-adapter.js";
+import type {
+  CreateRuntimeRequest,
+  ReconciliationResult,
+  RuntimeAdapter,
+  RuntimeInspection,
+} from "./runtime-adapter.js";
 
 export class InMemoryRuntime implements RuntimeAdapter {
   public readonly resources = new Map<string, RuntimeResource>();
@@ -33,6 +38,12 @@ export class InMemoryRuntime implements RuntimeAdapter {
   public async destroy(resource: RuntimeResource): Promise<void> {
     this.resources.delete(resource.containerId);
     this.tabs.delete(resource.containerId);
+  }
+
+  public async inspect(resource: RuntimeResource): Promise<RuntimeInspection> {
+    return this.resources.has(resource.containerId)
+      ? { state: "running" }
+      : { state: "failed", failure: "runtime container is missing" };
   }
 
   public async reconcile(): Promise<ReconciliationResult> {

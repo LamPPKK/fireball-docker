@@ -39,7 +39,7 @@ export function buildApp(dependencies: AppDependencies): FastifyInstance {
     routes.post<{ Body: { ticket: string } }>(
       "/orchestrator/v1/signaling/tickets/exchange",
       { schema: { body: signalingTicketSchema } },
-      async (request) => dependencies.sessions.exchangeSignalingTicket(request.body.ticket),
+      async (request) => await dependencies.sessions.exchangeSignalingTicket(request.body.ticket),
     );
 
     if (signaling && allowedOrigins) {
@@ -63,7 +63,7 @@ export function buildApp(dependencies: AppDependencies): FastifyInstance {
       { schema: { params: sessionIdSchema } },
       async (request) => {
         const context = await dependencies.authenticator.authenticate(request.headers);
-        return { session: dependencies.sessions.get(context, request.params.id) };
+        return { session: await dependencies.sessions.get(context, request.params.id) };
       },
     );
 
@@ -72,7 +72,7 @@ export function buildApp(dependencies: AppDependencies): FastifyInstance {
       { schema: { params: sessionIdSchema } },
       async (request, reply) => {
         const context = await dependencies.authenticator.authenticate(request.headers);
-        const ticket = dependencies.sessions.issueSignalingTicket(context, request.params.id);
+        const ticket = await dependencies.sessions.issueSignalingTicket(context, request.params.id);
         return reply.code(201).send(ticket);
       },
     );

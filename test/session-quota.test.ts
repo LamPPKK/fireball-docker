@@ -8,6 +8,7 @@ import type {
   CreateRuntimeRequest,
   ReconciliationResult,
   RuntimeAdapter,
+  RuntimeInspection,
 } from "../src/runtime/runtime-adapter.js";
 
 const alpha = { tenantId: "alpha", subject: "alice" } as const;
@@ -85,6 +86,10 @@ class GatedRuntime implements RuntimeAdapter {
   }
 
   public async destroy(_resource: RuntimeResource): Promise<void> {}
+
+  public async inspect(_resource: RuntimeResource): Promise<RuntimeInspection> {
+    return { state: "running" };
+  }
 
   public async reconcile(): Promise<ReconciliationResult> {
     return { containersRemoved: 0, networksRemoved: 0 };

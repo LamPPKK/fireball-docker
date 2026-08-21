@@ -115,43 +115,45 @@ export class SessionService {
     }
   }
 
-  public get(context: TenantContext, id: string): SessionView {
-    const record = this.sessions.get(this.key(context.tenantId, id));
-    if (!record) throw new OrchestratorError("SESSION_NOT_FOUND", "session not found", 404);
-    return toSessionView(record);
-  }
-
-  public issueSignalingTicket(context: TenantContext, id: string): SignalingTicketIssueResult {
+  public async get(context: TenantContext, id: string): Promise<SessionView> {
     const sessionKey = this.key(context.tenantId, id);
     const record = this.sessions.get(sessionKey);
     if (!record) throw new OrchestratorError("SESSION_NOT_FOUND", "session not found", 404);
-    if (record.phase !== "active") {
+    return toSessionView(await this.observeRuntime(sessionKey, record));
+  }
+
+  public async issueSignalingTicket(context: TenantContext, id: string): Promise<SignalingTicketIssueResult> {
+    const sessionKey = this.key(context.tenantId, id);
+    const record = this.sessions.get(sessionKey);
+    if (!record) throw new OrchestratorError("SESSION_NOT_FOUND", "session not found", 404);
+    const observed = await this.observeRuntime(sessionKey, record);
+    if (observed.phase !== "active") {
       throw new OrchestratorError("SIGNALING_UNAVAILABLE", "session is not active", 409);
     }
     return this.rotateSignalingTicket(sessionKey);
   }
 
   public async listTabs(context: TenantContext, id: string): Promise<readonly TabView[]> {
-    return await this.runtime.listTabs(this.activeRuntime(context, id));
+    return await this.runtime.listTabs(await this.activeRuntime(context, id));
   }
 
   public async createTab(context: TenantContext, id: string, url?: string): Promise<TabView> {
-    return await this.runtime.createTab(this.activeRuntime(context, id), url);
+    return await this.runtime.createTab(await this.activeRuntime(context, id), url);
   }
 
   public async activateTab(context: TenantContext, id: string, tabId: string): Promise<TabView> {
-    return await this.runtime.activateTab(this.activeRuntime(context, id), tabId);
+    return await this.runtime.activateTab(await this.activeRuntime(context, id), tabId);
   }
 
   public async navigateTab(context: TenantContext, id: string, tabId: string, url: string): Promise<TabView> {
-    return await this.runtime.navigateTab(this.activeRuntime(context, id), tabId, url);
+    return await this.runtime.navigateTab(await this.activeRuntime(context, id), tabId, url);
   }
 
   public async deleteTab(context: TenantContext, id: string, tabId: string): Promise<void> {
-    await this.runtime.deleteTab(this.activeRuntime(context, id), tabId);
+    await this.runtime.deleteTab(await this.activeRuntime(context, id), tabId);
   }
 
-  public exchangeSignalingTicket(ticket: string): SignalingTokenExchangeResult {
+  public async exchangeSignalingTicket(ticket: string): Promise<SignalingTokenExchangeResult> {
     const ticketHash = hashPresentedCredential(ticket);
     const binding = this.pairingTickets.get(ticketHash);
     this.pairingTickets.delete(ticketHash);
@@ -161,6 +163,10 @@ export class SessionService {
     if (credentials?.pairingTicketHash === ticketHash) credentials.pairingTicketHash = null;
     const record = this.sessions.get(binding.sessionKey);
     if (binding.expiresAt <= this.now() || record?.phase !== "active" || !credentials) {
+      throw invalidSignalingCredential();
+    }
+    const observed = await this.observeRuntime(binding.sessionKey, record);
+    if (observed.phase !== "active" || this.credentialsBySession.get(binding.sessionKey) !== credentials) {
       throw invalidSignalingCredential();
     }
 
@@ -177,7 +183,7 @@ export class SessionService {
     };
   }
 
-  public authorizeSignalingToken(token: string): SignalingAuthorization {
+  public async authorizeSignalingToken(token: string): Promise<SignalingAuthorization> {
     const tokenHash = hashPresentedCredential(token);
     const binding = this.signalingTokens.get(tokenHash);
     this.signalingTokens.delete(tokenHash);
@@ -188,10 +194,12 @@ export class SessionService {
     if (binding.expiresAt <= this.now() || record?.phase !== "active") {
       throw invalidSignalingCredential();
     }
+    const observed = await this.observeRuntime(binding.sessionKey, record);
+    if (observed.phase !== "active") throw invalidSignalingCredential();
     return {
-      sessionId: record.id,
-      tenantId: record.tenantId,
-      runtime: record.runtime,
+      sessionId: observed.id,
+      tenantId: observed.tenantId,
+      runtime: observed.runtime,
     };
   }
 
@@ -216,13 +224,29 @@ export class SessionService {
     return `${tenantId}:${id}`;
   }
 
-  private activeRuntime(context: TenantContext, id: string): SessionRecord["runtime"] {
-    const record = this.sessions.get(this.key(context.tenantId, id));
+  private async activeRuntime(context: TenantContext, id: string): Promise<SessionRecord["runtime"]> {
+    const sessionKey = this.key(context.tenantId, id);
+    const record = this.sessions.get(sessionKey);
     if (!record) throw new OrchestratorError("SESSION_NOT_FOUND", "session not found", 404);
-    if (record.phase !== "active") {
+    const observed = await this.observeRuntime(sessionKey, record);
+    if (observed.phase !== "active") {
       throw new OrchestratorError("TAB_RUNTIME_UNAVAILABLE", "session tab runtime is not active", 409);
     }
-    return record.runtime;
+    return observed.runtime;
+  }
+
+  private async observeRuntime(sessionKey: string, record: SessionRecord): Promise<SessionRecord> {
+    if (record.phase !== "active") return record;
+    const inspection = await this.runtime.inspect(record.runtime);
+    const current = this.sessions.get(sessionKey);
+    if (!current) throw new OrchestratorError("SESSION_NOT_FOUND", "session not found", 404);
+    if (current !== record || current.phase !== "active" || inspection.state === "running") return current;
+
+    this.revokeCredentials(sessionKey);
+    this.revokeSignalingConnections(record.id);
+    const failed = { ...record, phase: "failed" as const, failure: inspection.failure };
+    this.sessions.set(sessionKey, failed);
+    return failed;
   }
 
   private reserve(id: string, tenantId: string): void {
