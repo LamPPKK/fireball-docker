@@ -130,6 +130,7 @@ assert.match(imageWorkflow, /npm run session:media:smoke/);
 assert.match(imageWorkflow, /Smoke rswebrtc H\.264, Opus, control, reconnect, and burn/);
 assert.match(imageWorkflow, /Install pinned Firefox OpenH264 test codec/);
 assert.match(imageWorkflow, /MOZ_GMP_PATH/);
+assert.match(imageWorkflow, /MOZ_LOG: GMP:5/);
 assert.match(imageWorkflow, /npm ci --ignore-scripts/);
 assert.match(imageWorkflow, /npm run build/);
 assert.match(imageWorkflow, /ldconfig -p \| grep -F libGLESv2\.so\.2/);
@@ -195,6 +196,8 @@ for (const required of [
 for (const required of [
   'assertCommand("geckodriver"',
   'assertCommand("firefox"',
+  '"media.gmp-gmpopenh264.enabled": true',
+  "reportWebDriverDiagnostics()",
   "new WebSocketSignalingConnector",
   "signalingAllowedOrigins: new Set([pageOrigin])",
   "assertMediaEvidence(first)",

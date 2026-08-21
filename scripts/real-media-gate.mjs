@@ -176,6 +176,7 @@ try {
   process.stdout.write(`real rswebrtc H.264/Opus/control gate passed twice for ${platform}\n`);
 } catch (error) {
   await reportBrowserState();
+  reportWebDriverDiagnostics();
   reportManagedContainerLogs(instanceId);
   throw error;
 } finally {
@@ -429,7 +430,7 @@ function authorization() {
 
 async function startWebDriver() {
   const port = await reserveLoopbackPort();
-  const child = spawn("geckodriver", ["--host", "127.0.0.1", "--port", String(port)], {
+  const child = spawn("geckodriver", ["--log", "debug", "--host", "127.0.0.1", "--port", String(port)], {
     stdio: ["ignore", "pipe", "pipe"],
   });
   let diagnostics = "";
@@ -455,12 +456,19 @@ async function startWebDriver() {
   }
   return {
     endpoint,
+    diagnostics: () => diagnostics,
     close: async () => {
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
       await Promise.race([onceExit(child), delay(5_000)]);
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     },
   };
+}
+
+function reportWebDriverDiagnostics() {
+  const diagnostics = webdriver?.diagnostics?.();
+  if (!diagnostics) return;
+  process.stderr.write(`WebDriver diagnostics:\n${diagnostics}\n`);
 }
 
 async function createWebDriverSession(endpoint) {
@@ -475,6 +483,8 @@ async function createWebDriverSession(endpoint) {
           prefs: {
             "media.autoplay.default": 0,
             "media.autoplay.blocking_policy": 0,
+            "media.gmp-gmpopenh264.enabled": true,
+            "media.gmp-manager.updateEnabled": false,
             "media.peerconnection.ice.obfuscate_host_addresses": false,
             "media.peerconnection.ice.default_address_only": false,
             "media.peerconnection.ice.no_host": false,

@@ -100,6 +100,7 @@ jobs:
         env:
           FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
           FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
+          MOZ_LOG: GMP:5
       - name: Remove TURN smoke fixtures
         if: always()
         run: sudo rm -f "/tmp/fireball-ice-${{ matrix.suffix }}.json" "/tmp/fireball-ice-unsafe-${{ matrix.suffix }}.json"

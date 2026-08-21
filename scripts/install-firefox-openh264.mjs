@@ -71,12 +71,15 @@ async function installArtifact(artifact, output) {
       .filter(Boolean)
       .sort();
     assert.deepEqual(entries, ["gmpopenh264.info", "libgmpopenh264.so"]);
-    await mkdir(extracted, { mode: 0o700 });
+    await mkdir(extracted, { mode: 0o755 });
     execFileSync("unzip", ["-qq", archive, "-d", extracted], { stdio: "inherit" });
     await validateInstalledFile(join(extracted, "gmpopenh264.info"));
     await validateInstalledFile(join(extracted, "libgmpopenh264.so"));
-    await chmod(join(extracted, "gmpopenh264.info"), 0o600);
-    await chmod(join(extracted, "libgmpopenh264.so"), 0o700);
+    // Match the modes published in Mozilla's pinned ZIP. Firefox's GMP
+    // sandbox must be able to traverse and broker-read this non-secret test
+    // codec after the browser process starts.
+    await chmod(join(extracted, "gmpopenh264.info"), 0o644);
+    await chmod(join(extracted, "libgmpopenh264.so"), 0o755);
     await rename(extracted, output);
     return output;
   } finally {
