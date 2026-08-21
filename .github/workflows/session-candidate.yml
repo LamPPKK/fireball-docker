@@ -254,7 +254,7 @@ jobs:
           push-to-registry: true
 
       - name: Upload the exact platform evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: candidate-platform-${{ matrix.suffix }}
           path: ${{ steps.identity.outputs.artifact-directory }}
@@ -286,13 +286,13 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Download only the amd64 evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           name: candidate-platform-amd64
           path: artifacts/amd64
 
       - name: Download only the arm64 evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           name: candidate-platform-arm64
           path: artifacts/arm64
@@ -399,7 +399,7 @@ jobs:
             "$CANDIDATE_REFERENCE"
 
       - name: Upload the complete candidate evidence bundle
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: session-candidate-${{ github.sha }}
           path: artifacts
