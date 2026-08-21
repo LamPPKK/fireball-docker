@@ -17,6 +17,7 @@ if (!["linux/amd64", "linux/arm64"].includes(platform)) {
 }
 for (const [command, arguments_] of [
   ["turnserver", ["--version"]],
+  ["iptables", ["--version"]],
   ["ip", ["-Version"]],
   ["ss", ["--version"]],
   ["sudo", ["--version"]],
@@ -42,6 +43,7 @@ const installedIcePath = `/tmp/fireball-turn-${suffix}.json`;
 let turnserver;
 let mediaGate;
 let failure;
+let firewallRuleInstalled = false;
 
 try {
   await writeFile(turnConfigPath, turnConfiguration(), { mode: 0o600, flag: "wx" });
@@ -73,6 +75,8 @@ try {
     const sockets = command("ss", ["-H", "-lun"], { allowFailure: true });
     return sockets.split("\n").some((line) => line.includes(`${hostIp}:${listeningPort}`));
   }, 10_000, "coturn did not open its UDP listener");
+  command("sudo", ["iptables", ...firewallRuleArguments("-I")]);
+  firewallRuleInstalled = true;
   command("turnutils_uclient", [
     "-y", "-c", "-X", "-g", "-m", "1", "-n", "1",
     "-p", String(listeningPort),
@@ -107,6 +111,16 @@ try {
     turnserver.kill("SIGTERM");
     await Promise.race([childResult(turnserver), delay(5_000)]);
     if (turnserver.exitCode === null && turnserver.signalCode === null) turnserver.kill("SIGKILL");
+  }
+  if (firewallRuleInstalled) {
+    try {
+      command("sudo", ["iptables", ...firewallRuleArguments("-D")]);
+    } catch (error) {
+      const cleanupFailure = `scoped firewall cleanup failed: ${errorMessage(error)}`;
+      failure = failure === undefined
+        ? new Error(cleanupFailure)
+        : new Error(`${errorMessage(failure)}; ${cleanupFailure}`, { cause: failure });
+    }
   }
   command("sudo", ["rm", "-f", installedIcePath], { allowFailure: true });
   await rm(temporaryRoot, { recursive: true, force: true });
@@ -174,6 +188,20 @@ function browserIceConfiguration() {
   };
 }
 
+function firewallRuleArguments(action) {
+  return [
+    action,
+    "INPUT",
+    ...(action === "-I" ? ["1"] : []),
+    "-i", "br+",
+    "-p", "udp",
+    "--dport", String(listeningPort),
+    "-m", "comment",
+    "--comment", `fireball-turn-gate-${suffix}`,
+    "-j", "ACCEPT",
+  ];
+}
+
 function primaryIPv4Address() {
   const output = command("ip", ["-json", "route", "get", "198.18.0.1"]);
   let routes;
@@ -223,6 +251,10 @@ function command(commandName, arguments_, { allowFailure = false } = {}) {
 
 function assertCommand(commandName, arguments_) {
   command(commandName, arguments_);
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function childResult(child) {

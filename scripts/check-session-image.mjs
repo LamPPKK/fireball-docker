@@ -135,6 +135,16 @@ assert.match(imageWorkflow, /apt-get install -y --no-install-recommends coturn/)
 assert.match(imageWorkflow, /Install pinned Firefox OpenH264 test codec/);
 assert.match(imageWorkflow, /MOZ_GMP_PATH/);
 assert.match(imageWorkflow, /MOZ_LOG: GMP:5/);
+for (const required of [
+  'firewallRuleArguments("-I")',
+  'firewallRuleArguments("-D")',
+  '"-i", "br+"',
+  '"--dport", String(listeningPort)',
+  '`fireball-turn-gate-${suffix}`',
+]) {
+  assert.ok(turnGate.includes(required), `TURN gate is missing scoped firewall lifecycle: ${required}`);
+}
+assert.doesNotMatch(turnGate, /firewallRuleArguments\("-D"\)\], \{ allowFailure: true \}/);
 assert.match(imageWorkflow, /npm ci --ignore-scripts/);
 assert.match(imageWorkflow, /npm run build/);
 assert.match(imageWorkflow, /ldconfig -p \| grep -F libGLESv2\.so\.2/);
