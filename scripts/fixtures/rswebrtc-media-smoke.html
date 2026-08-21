@@ -40,6 +40,9 @@
         videoFrames: 0,
         localCandidateType: "",
         remoteCandidateType: "",
+        localCandidateTypes: [],
+        remoteCandidateTypes: [],
+        iceErrors: [],
         controlOpen: false,
         controlAcknowledged: false,
         signalingClosed: false,
@@ -193,6 +196,9 @@
           }
           if (message.ice) {
             const candidate = new RTCIceCandidate(message.ice);
+            if (candidate.type && !state.remoteCandidateTypes.includes(candidate.type)) {
+              state.remoteCandidateTypes.push(candidate.type);
+            }
             if (connection.remoteDescription) await connection.addIceCandidate(candidate);
             else pendingRemoteCandidates.push(candidate);
             return;
@@ -224,8 +230,16 @@
 
       connection.addEventListener("icecandidate", (event) => {
         if (!event.candidate) return;
+        if (event.candidate.type && !state.localCandidateTypes.includes(event.candidate.type)) {
+          state.localCandidateTypes.push(event.candidate.type);
+        }
         if (sessionId) sendLocalCandidate(event.candidate);
         else pendingLocalCandidates.push(event.candidate);
+      });
+      connection.addEventListener("icecandidateerror", (event) => {
+        const diagnostic = `${event.errorCode ?? "unknown"}:${String(event.errorText ?? "ICE candidate error").slice(0, 192)}`;
+        if (!state.iceErrors.includes(diagnostic) && state.iceErrors.length < 4) state.iceErrors.push(diagnostic);
+        render();
       });
       connection.addEventListener("connectionstatechange", () => {
         if (["failed", "closed"].includes(connection.connectionState) && state.phase !== "stopped" && state.phase !== "burned") {

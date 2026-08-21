@@ -73,6 +73,13 @@ try {
     const sockets = command("ss", ["-H", "-lun"], { allowFailure: true });
     return sockets.split("\n").some((line) => line.includes(`${hostIp}:${listeningPort}`));
   }, 10_000, "coturn did not open its UDP listener");
+  command("turnutils_uclient", [
+    "-y", "-c", "-X", "-g", "-m", "1", "-n", "1",
+    "-p", String(listeningPort),
+    "-u", username,
+    "-w", password,
+    hostIp,
+  ]);
 
   mediaGate = spawn(
     process.execPath,
@@ -132,6 +139,7 @@ function turnConfiguration() {
     "no-tcp-relay",
     "no-multicast-peers",
     "no-software-attribute",
+    "verbose",
     "simple-log",
     "no-stdout-log",
     `userdb=${turnDatabasePath}`,

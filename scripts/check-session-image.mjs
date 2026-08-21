@@ -226,6 +226,7 @@ for (const required of [
   'command("sudo", [',
   '"install", "-o", "root", "-g", "10001", "-m", "0440"',
   'spawn("turnserver"',
+  'command("turnutils_uclient"',
   'ice_transport_policy: "relay"',
   'iceTransportPolicy: "relay"',
   'FIREBALL_SMOKE_EXPECT_RELAY: "1"',
