@@ -16,6 +16,14 @@ const mediaFixture = await readFile(
   "utf8",
 );
 const imageWorkflow = await readFile(new URL("../.github/workflows/session-image.yml", import.meta.url), "utf8");
+const openh264Manifest = JSON.parse(await readFile(
+  new URL("../config/firefox-openh264-v1.json", import.meta.url),
+  "utf8",
+));
+const openh264Installer = await readFile(
+  new URL("./install-firefox-openh264.mjs", import.meta.url),
+  "utf8",
+);
 const appArmorProfile = await readFile(new URL("../deploy/apparmor/fireball-session", import.meta.url), "utf8");
 const seccompLoader = await readFile(new URL("../src/runtime/seccomp-profile.ts", import.meta.url), "utf8");
 const seccompProfile = JSON.parse(await readFile(
@@ -120,6 +128,8 @@ assert.match(imageWorkflow, /npm run container:smoke --prefix session/);
 assert.match(imageWorkflow, /npm run session:isolation:smoke/);
 assert.match(imageWorkflow, /npm run session:media:smoke/);
 assert.match(imageWorkflow, /Smoke rswebrtc H\.264, Opus, control, reconnect, and burn/);
+assert.match(imageWorkflow, /Install pinned Firefox OpenH264 test codec/);
+assert.match(imageWorkflow, /MOZ_GMP_PATH/);
 assert.match(imageWorkflow, /npm ci --ignore-scripts/);
 assert.match(imageWorkflow, /npm run build/);
 assert.match(imageWorkflow, /ldconfig -p \| grep -F libGLESv2\.so\.2/);
@@ -172,6 +182,8 @@ for (const required of [
   "new RTCPeerConnection({ iceServers: [] })",
   "video/h264",
   "audio/opus",
+  "browserH264Capable",
+  "browserOpusCapable",
   "framesDecoded",
   "ControlResponseMessage",
   "navigationEvent",
@@ -195,5 +207,14 @@ for (const required of [
 }
 assert.doesNotMatch(mediaGate, /FIREBALL_SMOKE_ICE_SERVERS_FILE|--privileged|seccomp=unconfined|systempaths=unconfined/);
 assert.doesNotMatch(mediaFixture, /signalingToken|signalingTicket|[?&](?:token|ticket)=/);
+assert.equal(openh264Manifest.schema_version, 1);
+assert.equal(openh264Manifest.plugin_version, "2.6.0");
+assert.equal(openh264Manifest.source.repository, "mozilla-firefox/firefox");
+assert.deepEqual(Object.keys(openh264Manifest.artifacts).sort(), ["linux/amd64", "linux/arm64"]);
+assert.match(openh264Installer, /redirect: "error"/);
+assert.match(openh264Installer, /createHash\("sha512"\)/);
+assert.match(openh264Installer, /Content-Length mismatch/);
+assert.match(openh264Installer, /gmpopenh264\.info/);
+assert.match(openh264Installer, /libgmpopenh264\.so/);
 
 process.stdout.write("session image contract is internally consistent\n");

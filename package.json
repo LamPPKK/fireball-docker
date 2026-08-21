@@ -15,7 +15,7 @@
     "dev": "node --enable-source-maps dist/src/main.js",
     "deployment:check": "node --check scripts/render-nginx-config.mjs && node --check scripts/install-nginx-config.mjs && node --test test/deployment-adapters.test.mjs",
     "session:check": "npm run check --prefix session",
-    "session:image:check": "node --check scripts/real-isolation-gate.mjs && node --check scripts/real-media-gate.mjs && node scripts/check-session-image.mjs",
+    "session:image:check": "node --check scripts/real-isolation-gate.mjs && node --check scripts/real-media-gate.mjs && node --check scripts/install-firefox-openh264.mjs && node scripts/install-firefox-openh264.mjs check && node scripts/check-session-image.mjs",
     "session:isolation:smoke": "node scripts/real-isolation-gate.mjs",
     "session:media:smoke": "node scripts/real-media-gate.mjs",
     "seccomp:check": "node --check scripts/seccomp-profile.mjs && node scripts/seccomp-profile.mjs check",

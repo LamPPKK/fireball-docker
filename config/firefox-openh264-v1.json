@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "plugin_version": "2.6.0",
+  "source": {
+    "repository": "mozilla-firefox/firefox",
+    "ref": "FIREFOX_152_0_6_RELEASE",
+    "path": "toolkit/content/gmp-sources/openh264.json"
+  },
+  "artifacts": {
+    "linux/amd64": {
+      "url": "https://ciscobinary.openh264.org/openh264-linux64-652bdb7719f30b52b08e506645a7322ff1b2cc6f.zip",
+      "size": 589006,
+      "sha512": "f5246bf14d038adf4ce0c4360262ab722bc3de4220f047c3d542b4c564074b4877dc8659e3125c5171c749e7ce93f20cc63777eb5e1539e960670cbc5f30ac85"
+    },
+    "linux/arm64": {
+      "url": "https://ciscobinary.openh264.org/openh264-linux64-aarch64-652bdb7719f30b52b08e506645a7322ff1b2cc6f.zip",
+      "size": 533329,
+      "sha512": "d2a6596f61d5efa0d206675dae99da3985ff96b4cbc6bdee86e9f9b082f25a356750fbc269a07eedcf0f9501bfcaba11938d8aac6134f5c69d5f675e2c4f3551"
+    }
+  }
+}

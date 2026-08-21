@@ -24,6 +24,8 @@
       // 0826007d970a473475b6bf993229ebcde173fdba (MPL-2.0 upstream).
       const state = window.__fireballSmoke = {
         phase: "starting",
+        browserH264Capable: false,
+        browserOpusCapable: false,
         signalingReady: false,
         producerCount: 0,
         sessionStarted: false,
@@ -53,6 +55,16 @@
       let controlChannel = null;
       let controlRequestSent = false;
       let messageChain = Promise.resolve();
+
+      const videoCapabilities = RTCRtpReceiver.getCapabilities("video")?.codecs ?? [];
+      const audioCapabilities = RTCRtpReceiver.getCapabilities("audio")?.codecs ?? [];
+      state.browserH264Capable = videoCapabilities.some((codec) => codec.mimeType.toLowerCase() === "video/h264");
+      state.browserOpusCapable = audioCapabilities.some((codec) => codec.mimeType.toLowerCase() === "audio/opus");
+      if (!state.browserH264Capable || !state.browserOpusCapable) {
+        fail(new Error(
+          `browser codec capability missing: H264=${state.browserH264Capable} Opus=${state.browserOpusCapable}`,
+        ));
+      }
 
       function render() {
         status.textContent = `${state.phase} · video ${state.videoPackets} packets/${state.videoFrames} frames · audio ${state.audioPackets} packets · control ${state.controlAcknowledged ? "ack" : "pending"}`;
@@ -289,6 +301,8 @@
         const audioCodecMatches = state.audioCodec.toLowerCase() === "audio/opus";
         if (
           state.signalingReady
+          && state.browserH264Capable
+          && state.browserOpusCapable
           && state.producerCount === 1
           && state.sessionStarted
           && state.offerHasH264

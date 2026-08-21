@@ -57,6 +57,10 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm ci --prefix session --ignore-scripts
+      - name: Install pinned Firefox OpenH264 test codec
+        run: |
+          plugin_path="$(node scripts/install-firefox-openh264.mjs install "${{ matrix.platform }}" "$RUNNER_TEMP/fireball-openh264-${{ matrix.suffix }}")"
+          printf 'MOZ_GMP_PATH=%s\n' "$plugin_path" >> "$GITHUB_ENV"
       - name: Load WPE user-namespace AppArmor profile
         run: sudo apparmor_parser -r deploy/apparmor/fireball-session
       - name: Prepare TURN smoke fixtures
