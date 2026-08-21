@@ -1,6 +1,7 @@
 #include <gst/gst.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cctype>
 #include <cstdint>
 #include <iostream>
@@ -30,6 +31,7 @@ struct Configuration {
   std::string stun_server;
   std::string turn_servers;
   std::string ice_policy = "all";
+  int control_output_fd = 3;
 };
 
 struct AudioBranch {
@@ -170,7 +172,7 @@ class Runtime {
   }
 
   int Run() {
-    std::cout << "READY " << configuration_.initial_tab_id << std::endl;
+    if (!WriteControlLine("READY " + configuration_.initial_tab_id)) return 1;
     g_main_loop_run(loop_);
     return exit_code_;
   }
@@ -616,10 +618,29 @@ class Runtime {
     else ReplyError(request, error.empty() ? "TAB_RUNTIME_FAILURE" : error);
   }
 
-  void ReplyOk(const std::string& request) { std::cout << "OK " << request << std::endl; }
+  void ReplyOk(const std::string& request) { WriteControlLine("OK " + request); }
 
   void ReplyError(const std::string& request, const std::string& code) {
-    std::cout << "ERR " << request << " " << SafeErrorCode(code) << std::endl;
+    WriteControlLine("ERR " + request + " " + SafeErrorCode(code));
+  }
+
+  bool WriteControlLine(std::string line) {
+    line.push_back('\n');
+    std::size_t offset = 0;
+    while (offset < line.size()) {
+      const ssize_t written = write(configuration_.control_output_fd, line.data() + offset,
+                                    line.size() - offset);
+      if (written > 0) {
+        offset += static_cast<std::size_t>(written);
+        continue;
+      }
+      if (written < 0 && errno == EINTR) continue;
+      std::cerr << "fireball-session-runtime: control channel write failed" << std::endl;
+      exit_code_ = 1;
+      if (loop_) g_main_loop_quit(loop_);
+      return false;
+    }
+    return true;
   }
 
   static std::string SafeErrorCode(const std::string& value) {
@@ -724,7 +745,7 @@ bool ParsePositiveInteger(const std::string& value, int maximum, int* result) {
 }
 
 std::optional<Configuration> ParseArguments(int argc, char** argv) {
-  if (argc != 19) return std::nullopt;
+  if (argc != 21) return std::nullopt;
   std::unordered_map<std::string, std::string> values;
   for (int index = 1; index < argc; index += 2) {
     if (index + 1 >= argc || argv[index][0] != '-' || values.contains(argv[index])) return std::nullopt;
@@ -732,7 +753,8 @@ std::optional<Configuration> ParseArguments(int argc, char** argv) {
   }
   const std::vector<std::string> required = {
       "--width", "--height", "--fps", "--bitrate", "--initial-tab-id",
-      "--initial-url-hex", "--stun-server", "--turn-servers", "--ice-policy"};
+      "--initial-url-hex", "--stun-server", "--turn-servers", "--ice-policy",
+      "--control-output-fd"};
   if (values.size() != required.size()
       || !std::all_of(required.begin(), required.end(), [&](const auto& key) { return values.contains(key); })) {
     return std::nullopt;
@@ -753,7 +775,10 @@ std::optional<Configuration> ParseArguments(int argc, char** argv) {
   configuration.stun_server = values["--stun-server"];
   configuration.turn_servers = values["--turn-servers"];
   configuration.ice_policy = values["--ice-policy"];
-  if (!(configuration.ice_policy == "all" || configuration.ice_policy == "relay")) return std::nullopt;
+  if (!(configuration.ice_policy == "all" || configuration.ice_policy == "relay")
+      || values["--control-output-fd"] != "3") {
+    return std::nullopt;
+  }
   return configuration;
 }
 

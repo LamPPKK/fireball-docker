@@ -106,7 +106,10 @@ export class TabController {
 }
 
 export class NativeTabDriver {
-  constructor(child, expectedInitialTabId, { timeoutMilliseconds = 5_000 } = {}) {
+  constructor(child, expectedInitialTabId, {
+    controlOutput = child.stdout,
+    timeoutMilliseconds = 5_000,
+  } = {}) {
     this.child = child;
     this.expectedInitialTabId = expectedInitialTabId;
     this.timeoutMilliseconds = timeoutMilliseconds;
@@ -116,7 +119,8 @@ export class NativeTabDriver {
       this.resolveReady = resolve;
       this.rejectReady = reject;
     });
-    this.lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+    if (!controlOutput) throw new Error("native tab runtime control output is unavailable");
+    this.lines = createInterface({ input: controlOutput, crlfDelay: Infinity });
     this.lines.on("line", (line) => this.#handleLine(line));
     child.once("error", (error) => this.#fail(error));
     child.once("exit", (code, signal) => this.#fail(new Error(

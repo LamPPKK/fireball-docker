@@ -157,6 +157,23 @@ test("native protocol driver fails closed on malformed runtime output", async ()
   );
 });
 
+test("native protocol uses a dedicated descriptor and ignores plugin stdout", async () => {
+  const child = fakeChild();
+  const controlOutput = new PassThrough();
+  const driver = new NativeTabDriver(child, initial.id, {
+    controlOutput,
+    timeoutMilliseconds: 500,
+  });
+  child.stdout.write("untrusted plugin diagnostic on stdout\n");
+  controlOutput.write(`READY ${initial.id}\n`);
+  await driver.waitUntilReady();
+
+  const operation = driver.activate(initial.id);
+  child.stdin.read();
+  controlOutput.write("OK 1\n");
+  await operation;
+});
+
 class RecordingDriver {
   calls = [];
   failure;

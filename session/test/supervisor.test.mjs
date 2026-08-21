@@ -65,6 +65,7 @@ test("native runtime receives one initial tab with explicit stream and ICE confi
   assert.equal(argumentsList[argumentsList.indexOf("--stun-server") + 1], "");
   assert.equal(argumentsList[argumentsList.indexOf("--turn-servers") + 1], "");
   assert.equal(argumentsList[argumentsList.indexOf("--ice-policy") + 1], "all");
+  assert.equal(argumentsList[argumentsList.indexOf("--control-output-fd") + 1], "3");
   assert.doesNotMatch(command, /stun\.l\.google\.com/);
   assert.doesNotMatch(command, new RegExp(secret));
 });

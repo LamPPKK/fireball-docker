@@ -135,6 +135,7 @@ export function runtimeArguments(configuration, initialTabId) {
       ? ""
       : `<${configuration.ice.turnServers.map((server) => `"${server}"`).join(",")}>`,
     "--ice-policy", configuration.ice.iceTransportPolicy,
+    "--control-output-fd", "3",
   ];
 }
 
@@ -551,9 +552,12 @@ async function main() {
   const initialTab = { id: randomUUID(), url: configuration.startUrl };
   const runtimeProcess = spawn("/usr/bin/fireball-session-runtime", runtimeArguments(configuration, initialTab.id), {
     env: safeEnvironment,
-    stdio: ["pipe", "pipe", "inherit"],
+    stdio: ["pipe", "inherit", "inherit", "pipe"],
   });
-  const driver = new NativeTabDriver(runtimeProcess, initialTab.id, { timeoutMilliseconds: 30_000 });
+  const driver = new NativeTabDriver(runtimeProcess, initialTab.id, {
+    controlOutput: runtimeProcess.stdio[3],
+    timeoutMilliseconds: 30_000,
+  });
   await driver.waitUntilReady();
   const tabs = new TabController(driver, initialTab);
   const proxy = await createSignalingProxy({ secret: configuration.secret, tabs });
