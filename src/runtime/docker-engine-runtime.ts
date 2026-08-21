@@ -22,7 +22,6 @@ export interface DockerEngineOptions {
   readonly appArmorProfile?: string;
   readonly seccompProfile?: string;
   readonly iceServersFile?: string;
-  readonly iceDiagnostics?: boolean;
   readonly requestTimeoutMs?: number;
   readonly startupHealthAttempts?: number;
   readonly startupHealthIntervalMs?: number;
@@ -58,9 +57,6 @@ export class DockerEngineRuntime implements RuntimeAdapter {
       )
     ) {
       throw new Error("session ICE servers file must be a safe absolute host path");
-    }
-    if (options.iceDiagnostics !== undefined && typeof options.iceDiagnostics !== "boolean") {
-      throw new Error("session ICE diagnostics flag must be boolean");
     }
     this.startupHealthAttempts = positiveInteger(options.startupHealthAttempts ?? 60, "startup health attempts");
     this.startupHealthIntervalMs = positiveInteger(
@@ -102,7 +98,6 @@ export class DockerEngineRuntime implements RuntimeAdapter {
             ...(this.options.iceServersFile === undefined
               ? []
               : [`FIREBALL_ICE_SERVERS_FILE=${ICE_SERVERS_CONTAINER_PATH}`]),
-            ...(this.options.iceDiagnostics === true ? ["FIREBALL_GST_ICE_DIAGNOSTICS=1"] : []),
           ],
           ExposedPorts: { [INTERNAL_SIGNALING_PORT]: {} },
           HostConfig: {

@@ -235,23 +235,7 @@ test("bootstrap secret is removed from the GStreamer child environment", () => {
   const environment = childEnvironment({
     FIREBALL_INTERNAL_SIGNALING_SECRET: secret,
     FIREBALL_ICE_SERVERS_FILE: "/run/fireball-secrets/ice-servers.json",
-    FIREBALL_GST_ICE_DIAGNOSTICS: "1",
     GST_DEBUG: "2",
   });
   assert.deepEqual(environment, { GST_DEBUG: "2" });
-});
-
-test("ICE diagnostics is an exact opt-in and never reaches the child unchanged", () => {
-  const configuration = parseConfiguration({
-    FIREBALL_INTERNAL_SIGNALING_SECRET: secret,
-    FIREBALL_GST_ICE_DIAGNOSTICS: "1",
-  });
-  assert.equal(configuration.iceDiagnostics, true);
-  assert.throws(
-    () => parseConfiguration({
-      FIREBALL_INTERNAL_SIGNALING_SECRET: secret,
-      FIREBALL_GST_ICE_DIAGNOSTICS: "true",
-    }),
-    /must be 1/,
-  );
 });

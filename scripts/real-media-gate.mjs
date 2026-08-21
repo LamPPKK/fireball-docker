@@ -87,7 +87,6 @@ const runtime = new DockerEngineRuntime({
   appArmorProfile,
   seccompProfile,
   iceServersFile,
-  iceDiagnostics: expectRelay,
   requestTimeoutMs: 60_000,
   startupHealthAttempts: 120,
   startupHealthIntervalMs: 1_000,

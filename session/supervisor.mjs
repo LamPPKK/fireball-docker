@@ -39,18 +39,13 @@ export function parseConfiguration(environment, iceConfigurationLoader = loadIce
   const ice = environment.FIREBALL_ICE_SERVERS_FILE === undefined
     ? Object.freeze({ stunServer: "", turnServers: Object.freeze([]), iceTransportPolicy: "all" })
     : iceConfigurationLoader(validateIceConfigurationPath(environment.FIREBALL_ICE_SERVERS_FILE));
-  const iceDiagnostics = environment.FIREBALL_GST_ICE_DIAGNOSTICS === "1";
-  if (environment.FIREBALL_GST_ICE_DIAGNOSTICS !== undefined && !iceDiagnostics) {
-    throw new Error("FIREBALL_GST_ICE_DIAGNOSTICS must be 1 when set");
-  }
-  return Object.freeze({ secret, profileName, profile, startUrl, ice, iceDiagnostics });
+  return Object.freeze({ secret, profileName, profile, startUrl, ice });
 }
 
 export function childEnvironment(environment) {
   const {
     FIREBALL_INTERNAL_SIGNALING_SECRET: _secret,
     FIREBALL_ICE_SERVERS_FILE: _iceServersFile,
-    FIREBALL_GST_ICE_DIAGNOSTICS: _iceDiagnostics,
     ...safeEnvironment
   } = environment;
   return safeEnvironment;
@@ -493,9 +488,6 @@ function preflight() {
 async function main() {
   const configuration = parseConfiguration(process.env);
   const safeEnvironment = childEnvironment(process.env);
-  if (configuration.iceDiagnostics) {
-    safeEnvironment.GST_DEBUG = "webrtcnice:7,webrtcbin:6,webrtcsink:5";
-  }
   delete process.env.FIREBALL_INTERNAL_SIGNALING_SECRET;
   mkdirSync("/run/fireball-session/home", { recursive: true, mode: 0o700 });
   mkdirSync("/run/fireball-session/runtime", { recursive: true, mode: 0o700 });
