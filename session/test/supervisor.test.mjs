@@ -62,6 +62,7 @@ test("pipeline is one WPE source with explicit H264, Opus, control, and no publi
   assert.match(command, /opusenc bitrate=64000/);
   assert.match(command, /audiotestsrc wave=silence is-live=true do-timestamp=true/);
   assert.match(command, /audiomixer name=audio_mix/);
+  assert.match(command, /audio\/x-raw,format=S16LE,rate=48000,channels=2/);
   assert.match(command, /web\.audio_0 .* audio_mix\./);
   assert.equal(argumentsList.filter((argument) => argument === "opusenc").length, 1);
   assert.match(command, /enable-control-data-channel=true/);
