@@ -41,11 +41,11 @@ After QA, Syft produces one SPDX JSON document per platform. The workflow record
 
 The `candidate-<commit>` tag is only a discovery pointer and can be replaced by an explicit rerun. Consumers must deploy the exact index digest from the evidence. QA platform tags are intentionally retained as forensic inputs if a later merge/sign step fails; they are not releases.
 
-Workflow run [`32470322375`](https://github.com/LamPPKK/fireball-docker/actions/runs/32470322375) at commit `248d97db151a25e9ed535d76325f8093f2096cb4` is the current clean **PASS** for this no-rebuild candidate lane. The amd64 platform job passed in 6 minutes 15 seconds and the arm64 job in 5 minutes 20 seconds; the index validation, attestation, and signing job then passed in 59 seconds. Both native jobs passed restart reconciliation, pipeline-crash containment, the one-container four-tab lifecycle, a real `nginx -t`, verified TLS 1.2/1.3 HTTP and authenticated WebSocket routing, media/control, relay-only TURN, SBOM, and platform attestation against their locked platform digest. Evidence identifies:
+Workflow run [`32473087483`](https://github.com/LamPPKK/fireball-docker/actions/runs/32473087483) at commit `3281e99b177a2f0f6251c3dbf4d3fef32fe225e9` is the current clean **PASS** for this no-rebuild candidate lane. The amd64 platform job passed in 4 minutes 29 seconds and the arm64 job in 4 minutes 6 seconds; the index validation, attestation, and signing job then passed in 36 seconds. Both native jobs passed restart reconciliation, pipeline-crash containment with the public session state moving to `failed` and credentials revoked, the one-container four-tab lifecycle, a real `nginx -t`, verified TLS 1.2/1.3 HTTP and authenticated WebSocket routing, media/control, relay-only TURN, SBOM, and platform attestation against their locked platform digest. Evidence identifies:
 
-- `linux/amd64`: `sha256:526d5ca3bde30c45bebbad7578574591b9b70635b28df3cd796bf965445ba418`
-- `linux/arm64`: `sha256:272ffcc316c71f177bd36d3c2073010d935b1c7670e8c50075a822e2a1686a43`
-- promoted OCI index: `ghcr.io/lamppkk/fireball-session@sha256:0c092da4f5b67681c19ad8f6d75325be09801d8e884235bb814aab7a31d81bcf`
+- `linux/amd64`: `sha256:a7942eb8910ab189bafad7362293b6521cdfeeabfd2ed992b714cd9c9b0ae1e3`
+- `linux/arm64`: `sha256:7daba7c7b49648d90e9643b6ca4ea93e4db7df239494624e15288a5ded34d083`
+- promoted OCI index: `ghcr.io/lamppkk/fireball-session@sha256:5b04f9bdff0424a4d982659594fb94682e06d78c830bbbc15b026df17838cc59`
 
 The downloaded evidence bundle passed the repository's normative validator again after the workflow completed. Independent predicate-filtered `gh attestation verify` checks accepted both the SLSA provenance and `https://fireball.dev/attestations/session-candidate/v1` predicate when locked to `session-candidate.yml` and the source commit. Filtering avoids treating the separate Cosign public-good signature stored beside the GitHub attestations as a GitHub Actions bundle. The workflow itself also completed exact-identity Cosign verification.
 
