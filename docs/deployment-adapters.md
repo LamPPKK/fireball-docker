@@ -1,6 +1,6 @@
 # TURN and reverse-proxy deployment adapters
 
-These adapters keep deployment credentials outside both Fireball OCI images. They do not make the current session-image candidate a release: the source-revision media/control, relay-only TURN, and two-tenant gates pass, but they must be repeated against the exact candidate digest, which also still needs browser-state isolation evidence before promotion.
+These adapters keep deployment credentials outside both Fireball OCI images. They do not make the current session-image candidate a release: the source-revision media/control, relay-only TURN, two-tenant, and browser-state gates pass, but they must be repeated against the exact candidate digest before promotion.
 
 ## TURN secret file
 
