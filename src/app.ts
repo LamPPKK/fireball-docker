@@ -77,6 +77,60 @@ export function buildApp(dependencies: AppDependencies): FastifyInstance {
       },
     );
 
+    routes.get<{ Params: { id: string } }>(
+      "/orchestrator/v1/sessions/:id/tabs",
+      { schema: { params: sessionIdSchema } },
+      async (request) => {
+        const context = await dependencies.authenticator.authenticate(request.headers);
+        return { tabs: await dependencies.sessions.listTabs(context, request.params.id) };
+      },
+    );
+
+    routes.post<{ Params: { id: string }; Body: { url?: string } }>(
+      "/orchestrator/v1/sessions/:id/tabs",
+      { schema: { params: sessionIdSchema, body: optionalTabUrlSchema } },
+      async (request, reply) => {
+        const context = await dependencies.authenticator.authenticate(request.headers);
+        const tab = await dependencies.sessions.createTab(context, request.params.id, request.body?.url);
+        return reply.code(201).send({ tab });
+      },
+    );
+
+    routes.put<{ Params: { id: string; tabId: string } }>(
+      "/orchestrator/v1/sessions/:id/tabs/:tabId/active",
+      { schema: { params: sessionAndTabIdSchema } },
+      async (request) => {
+        const context = await dependencies.authenticator.authenticate(request.headers);
+        const tab = await dependencies.sessions.activateTab(context, request.params.id, request.params.tabId);
+        return { tab };
+      },
+    );
+
+    routes.put<{ Params: { id: string; tabId: string }; Body: { url: string } }>(
+      "/orchestrator/v1/sessions/:id/tabs/:tabId/navigation",
+      { schema: { params: sessionAndTabIdSchema, body: requiredTabUrlSchema } },
+      async (request) => {
+        const context = await dependencies.authenticator.authenticate(request.headers);
+        const tab = await dependencies.sessions.navigateTab(
+          context,
+          request.params.id,
+          request.params.tabId,
+          request.body.url,
+        );
+        return { tab };
+      },
+    );
+
+    routes.delete<{ Params: { id: string; tabId: string } }>(
+      "/orchestrator/v1/sessions/:id/tabs/:tabId",
+      { schema: { params: sessionAndTabIdSchema } },
+      async (request, reply) => {
+        const context = await dependencies.authenticator.authenticate(request.headers);
+        await dependencies.sessions.deleteTab(context, request.params.id, request.params.tabId);
+        return reply.code(204).send();
+      },
+    );
+
     routes.delete<{ Params: { id: string } }>(
       "/orchestrator/v1/sessions/:id",
       { schema: { params: sessionIdSchema } },
@@ -116,6 +170,27 @@ const signalingTicketSchema = {
   properties: {
     ticket: { type: "string", minLength: 43, maxLength: 43, pattern: "^[A-Za-z0-9_-]+$" },
   },
+} as const;
+
+const sessionAndTabIdSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "tabId"],
+  properties: {
+    id: { type: "string", format: "uuid" },
+    tabId: { type: "string", format: "uuid" },
+  },
+} as const;
+
+const optionalTabUrlSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: { url: { type: "string", minLength: 1, maxLength: 4_096 } },
+} as const;
+
+const requiredTabUrlSchema = {
+  ...optionalTabUrlSchema,
+  required: ["url"],
 } as const;
 
 function isValidationError(error: unknown): error is Error & { validation: unknown } {

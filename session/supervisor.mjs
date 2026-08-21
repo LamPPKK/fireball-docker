@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
   closeSync,
   constants,
@@ -8,10 +8,13 @@ import {
   openSync,
   readFileSync,
 } from "node:fs";
+import { createServer } from "node:http";
 import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 
 import WebSocket, { WebSocketServer } from "ws";
+
+import { NativeTabDriver, TabControlError, TabController, encodeUrl } from "./tab-control.mjs";
 
 const AUTHENTICATION_TIMEOUT_MS = 5_000;
 const MAX_PAYLOAD_BYTES = 64 * 1024;
@@ -118,105 +121,20 @@ export function loadIceServerConfiguration(filePath) {
   }
 }
 
-export function pipelineArguments(configuration) {
+export function runtimeArguments(configuration, initialTabId) {
   const { width, height, fps, bitrate } = configuration.profile;
-  const iceArguments = [
-    configuration.ice.stunServer === ""
-      ? 'stun-server=""'
-      : `stun-server=${configuration.ice.stunServer}`,
-    ...(configuration.ice.turnServers.length === 0
-      ? []
-      : [`turn-servers=<${configuration.ice.turnServers.map((server) => `"${server}"`).join(",")}>`]),
-    `ice-transport-policy=${configuration.ice.iceTransportPolicy}`,
-  ];
   return [
-    "-e",
-    "wpesrc",
-    "name=web",
-    `location=${configuration.startUrl}`,
-    "web.video",
-    "!",
-    "queue",
-    "leaky=downstream",
-    "max-size-buffers=2",
-    "!",
-    "video/x-raw,format=BGRA",
-    "!",
-    "videoconvert",
-    "!",
-    "videoscale",
-    "!",
-    "videorate",
-    "!",
-    `video/x-raw,format=I420,width=${width},height=${height},framerate=${fps}/1`,
-    "!",
-    "openh264enc",
-    "usage-type=screen",
-    "rate-control=bitrate",
-    "complexity=low",
-    "enable-frame-skip=true",
-    `gop-size=${fps * 2}`,
-    `bitrate=${bitrate}`,
-    "!",
-    "h264parse",
-    "config-interval=-1",
-    "!",
-    "video/x-h264,profile=constrained-baseline",
-    "!",
-    "webrtcsink",
-    "name=rtc",
-    "video-caps=video/x-h264",
-    "enable-control-data-channel=true",
-    "run-signalling-server=true",
-    "signalling-server-host=127.0.0.1",
-    "signalling-server-port=8443",
-    "run-web-server=false",
-    ...iceArguments,
-    "meta=meta,name=fireball-session",
-    "audiomixer",
-    "name=audio_mix",
-    "!",
-    "queue",
-    "max-size-buffers=8",
-    "!",
-    "audioconvert",
-    "!",
-    "audioresample",
-    "!",
-    "audio/x-raw,format=S16LE,rate=48000,channels=2",
-    "!",
-    "opusenc",
-    "bitrate=64000",
-    "!",
-    "rtc.",
-    "audiotestsrc",
-    "wave=silence",
-    "is-live=true",
-    "do-timestamp=true",
-    "!",
-    "queue",
-    "max-size-buffers=8",
-    "!",
-    "audioconvert",
-    "!",
-    "audioresample",
-    "!",
-    "audio/x-raw,format=S16LE,rate=48000,channels=2",
-    "!",
-    "audio_mix.",
-    "web.audio_0",
-    "!",
-    "queue",
-    "leaky=downstream",
-    "max-size-buffers=8",
-    "!",
-    "audioconvert",
-    "!",
-    "audioresample",
-    "!",
-    "audio/x-raw,format=S16LE,rate=48000,channels=2",
-    "!",
-    "audio_mix.",
+    "--width", String(width),
+    "--height", String(height),
+    "--fps", String(fps),
+    "--bitrate", String(bitrate),
+    "--initial-tab-id", initialTabId,
+    "--initial-url-hex", encodeUrl(configuration.startUrl),
+    "--stun-server", configuration.ice.stunServer,
+    "--turn-servers", configuration.ice.turnServers.length === 0
+      ? ""
+      : `<${configuration.ice.turnServers.map((server) => `"${server}"`).join(",")}>`,
+    "--ice-policy", configuration.ice.iceTransportPolicy,
   ];
 }
 
@@ -317,20 +235,27 @@ export function parseAuthenticationFrame(data, isBinary, expectedSecret) {
 
 export async function createSignalingProxy({
   secret,
+  tabs,
   host = "0.0.0.0",
   port = 8444,
   upstreamUrl = "ws://127.0.0.1:8443",
 }) {
-  const server = new WebSocketServer({
-    host,
-    port,
+  const webSocketServer = new WebSocketServer({
+    noServer: true,
     maxPayload: MAX_PAYLOAD_BYTES,
     perMessageDeflate: false,
     clientTracking: true,
   });
+  const server = createServer((request, response) => {
+    void handleTabRequest(request, response, secret, tabs);
+  });
+  server.requestTimeout = 10_000;
+  server.headersTimeout = 5_000;
+  server.keepAliveTimeout = 1_000;
+  server.maxHeadersCount = 32;
   let activeLease;
 
-  server.on("connection", (client) => {
+  webSocketServer.on("connection", (client) => {
     if (activeLease) {
       closeSocket(client, 1008, "controller already connected");
       return;
@@ -407,7 +332,18 @@ export async function createSignalingProxy({
     client.once("error", () => shutdownLease(lease, 1011, "client connection failed"));
   });
 
+  server.on("upgrade", (request, socket, head) => {
+    if (request.url !== "/internal/v1/signaling") {
+      socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+      return;
+    }
+    webSocketServer.handleUpgrade(request, socket, head, (client) => {
+      webSocketServer.emit("connection", client, request);
+    });
+  });
+
   await new Promise((resolve, reject) => {
+    server.listen(port, host);
     server.once("listening", resolve);
     server.once("error", reject);
   });
@@ -425,10 +361,128 @@ export async function createSignalingProxy({
         }
         activeLease = undefined;
       }
-      for (const client of server.clients) client.terminate();
+      for (const client of webSocketServer.clients) client.terminate();
+      await new Promise((resolve) => webSocketServer.close(resolve));
       await new Promise((resolve) => server.close(resolve));
     },
   };
+}
+
+async function handleTabRequest(request, response, secret, tabs) {
+  response.setHeader("cache-control", "no-store");
+  response.setHeader("connection", "close");
+  response.setHeader("content-type", "application/json; charset=utf-8");
+  response.setHeader("x-content-type-options", "nosniff");
+  if (!tabs || !internalRequestAuthorized(request.headers.authorization, secret)) {
+    sendJson(response, 401, { error: { code: "INTERNAL_AUTH_REQUIRED", message: "authentication required" } });
+    return;
+  }
+  let url;
+  try {
+    url = new URL(request.url ?? "", "http://fireball.internal");
+  } catch {
+    sendJson(response, 400, { error: { code: "VALIDATION_FAILED", message: "request validation failed" } });
+    return;
+  }
+  if (url.search !== "") {
+    sendJson(response, 400, { error: { code: "VALIDATION_FAILED", message: "request validation failed" } });
+    return;
+  }
+  const tabRoute = /^\/internal\/v1\/tabs\/([0-9a-f-]{36})(?:\/(active|navigation))?$/.exec(url.pathname);
+  try {
+    if (request.method === "GET" && url.pathname === "/internal/v1/tabs") {
+      await requireEmptyBody(request);
+      sendJson(response, 200, { tabs: tabs.list() });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/internal/v1/tabs") {
+      const body = await readJsonBody(request, { optional: ["url"] });
+      const tab = await tabs.create(body.url);
+      sendJson(response, 201, { tab });
+      return;
+    }
+    if (request.method === "PUT" && tabRoute?.[2] === "active") {
+      await requireEmptyBody(request);
+      const tab = await tabs.activate(tabRoute[1]);
+      sendJson(response, 200, { tab });
+      return;
+    }
+    if (request.method === "PUT" && tabRoute?.[2] === "navigation") {
+      const body = await readJsonBody(request, { required: ["url"] });
+      const tab = await tabs.navigate(tabRoute[1], body.url);
+      sendJson(response, 200, { tab });
+      return;
+    }
+    if (request.method === "DELETE" && tabRoute && tabRoute[2] === undefined) {
+      await requireEmptyBody(request);
+      await tabs.remove(tabRoute[1]);
+      response.writeHead(204).end();
+      return;
+    }
+    sendJson(response, 404, { error: { code: "TAB_ROUTE_NOT_FOUND", message: "tab route not found" } });
+  } catch (error) {
+    if (error instanceof TabControlError) {
+      const status = error.code === "TAB_NOT_FOUND" ? 404
+        : error.code === "TAB_URL_INVALID" ? 400
+          : error.code === "TAB_LIMIT_REACHED" || error.code === "TAB_MINIMUM_REACHED" ? 409
+            : 503;
+      sendJson(response, status, { error: { code: error.code, message: error.message } });
+      return;
+    }
+    sendJson(response, 400, { error: { code: "VALIDATION_FAILED", message: "request validation failed" } });
+  }
+}
+
+function internalRequestAuthorized(value, secret) {
+  if (typeof value !== "string") return false;
+  const actual = Buffer.from(value, "utf8");
+  const expected = Buffer.from(`Bearer ${secret}`, "utf8");
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+async function requireEmptyBody(request) {
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > 0) throw new Error("request body must be empty");
+  }
+}
+
+async function readJsonBody(request, shape) {
+  if (request.headers["content-type"] !== "application/json") {
+    throw new Error("content type must be application/json");
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > 8 * 1024) throw new Error("request body is too large");
+    chunks.push(chunk);
+  }
+  let body;
+  try {
+    body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new Error("request body must be valid JSON");
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw new Error("request body must be an object");
+  }
+  const required = shape.required ?? [];
+  const optional = shape.optional ?? [];
+  const allowed = new Set([...required, ...optional]);
+  if (
+    required.some((key) => !Object.hasOwn(body, key))
+    || Object.keys(body).some((key) => !allowed.has(key))
+  ) {
+    throw new Error("request body has invalid fields");
+  }
+  return body;
+}
+
+function sendJson(response, status, body) {
+  const encoded = Buffer.from(JSON.stringify(body));
+  response.writeHead(status, { "content-length": encoded.length }).end(encoded);
 }
 
 function rawDataLength(data) {
@@ -472,6 +526,7 @@ function closeSocket(socket, code, reason) {
 function preflight() {
   for (const element of [
     "wpesrc",
+    "input-selector",
     "webrtcsink",
     "openh264enc",
     "h264parse",
@@ -493,32 +548,36 @@ async function main() {
   mkdirSync("/run/fireball-session/runtime", { recursive: true, mode: 0o700 });
   preflight();
 
-  const pipeline = spawn("gst-launch-1.0", pipelineArguments(configuration), {
+  const initialTab = { id: randomUUID(), url: configuration.startUrl };
+  const runtimeProcess = spawn("/usr/bin/fireball-session-runtime", runtimeArguments(configuration, initialTab.id), {
     env: safeEnvironment,
-    stdio: ["ignore", "inherit", "inherit"],
+    stdio: ["pipe", "pipe", "inherit"],
   });
-  const proxy = await createSignalingProxy({ secret: configuration.secret });
+  const driver = new NativeTabDriver(runtimeProcess, initialTab.id, { timeoutMilliseconds: 30_000 });
+  await driver.waitUntilReady();
+  const tabs = new TabController(driver, initialTab);
+  const proxy = await createSignalingProxy({ secret: configuration.secret, tabs });
   let shuttingDown = false;
 
   const shutdown = async (exitCode) => {
     if (shuttingDown) return;
     shuttingDown = true;
     await proxy.close();
-    if (pipeline.exitCode === null && pipeline.signalCode === null) {
-      pipeline.kill("SIGTERM");
-      const killTimer = setTimeout(() => pipeline.kill("SIGKILL"), 3_000);
+    driver.shutdown();
+    if (runtimeProcess.exitCode === null && runtimeProcess.signalCode === null) {
+      const killTimer = setTimeout(() => runtimeProcess.kill("SIGKILL"), 3_000);
       killTimer.unref();
     }
     process.exitCode = exitCode;
   };
 
-  pipeline.once("error", (error) => {
-    process.stderr.write(`fireball-session: pipeline launch failed: ${error.message}\n`);
+  runtimeProcess.once("error", (error) => {
+    process.stderr.write(`fireball-session: runtime launch failed: ${error.message}\n`);
     void shutdown(1);
   });
-  pipeline.once("exit", (code, signal) => {
+  runtimeProcess.once("exit", (code, signal) => {
     if (!shuttingDown) {
-      process.stderr.write(`fireball-session: pipeline exited unexpectedly (${code ?? signal ?? "unknown"})\n`);
+      process.stderr.write(`fireball-session: runtime exited unexpectedly (${code ?? signal ?? "unknown"})\n`);
       void shutdown(1);
     }
   });

@@ -108,7 +108,7 @@ An operator may configure TURN through the [deployment adapter](deployment-adapt
 - The portable Docker profile negotiates WPE's system-memory BGRA output before color conversion, avoiding a mandatory GPU-backed/zero-copy buffer path. WPE still receives its required EGL/GLES runtime libraries. Hardware/zero-copy profiles remain benchmark-gated deployment variants.
 - Docker mounts that path as a `256 MiB` tmpfs owned by UID/GID `10001`, with `noexec`, `nosuid`, and `nodev`.
 - Burn closes active/pending relays before force-removing the container and its private network.
-- Docker restart is explicitly disabled for session containers. A forced `gst-launch-1.0` failure must close the public relay, stop the container with a non-zero exit, keep restart count at zero, revoke credentials on Burn, remove all managed resources, and permit a clean replacement session. This is fail-closed containment plus Burn/recreate recovery, not transparent in-place browser recovery.
+- Docker restart is explicitly disabled for session containers. A forced `fireball-session-runtime` failure must close the public relay, stop the container with a non-zero exit, keep restart count at zero, revoke credentials on Burn, remove all managed resources, and permit a clean replacement session. This is fail-closed containment plus Burn/recreate recovery, not transparent in-place browser recovery.
 
 Container isolation is defense-in-depth. It does not prove immunity to browser zero-days or container escapes.
 

@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { OrchestratorError } from "../src/domain/errors.js";
 import { SessionService } from "../src/domain/session-service.js";
-import type { RuntimeResource } from "../src/domain/types.js";
+import type { RuntimeResource, TabView } from "../src/domain/types.js";
 import type {
   CreateRuntimeRequest,
   ReconciliationResult,
@@ -89,6 +89,14 @@ class GatedRuntime implements RuntimeAdapter {
     return { containersRemoved: 0, networksRemoved: 0 };
   }
 
+  public async listTabs(_resource: RuntimeResource): Promise<readonly TabView[]> { return []; }
+  public async createTab(_resource: RuntimeResource, _url?: string): Promise<TabView> { throw new Error("unused"); }
+  public async activateTab(_resource: RuntimeResource, _tabId: string): Promise<TabView> { throw new Error("unused"); }
+  public async navigateTab(_resource: RuntimeResource, _tabId: string, _url: string): Promise<TabView> {
+    throw new Error("unused");
+  }
+  public async deleteTab(_resource: RuntimeResource, _tabId: string): Promise<void> { throw new Error("unused"); }
+
   public resolveNext(): void {
     const pending = this.shiftPending();
     pending.resolve({
@@ -98,6 +106,7 @@ class GatedRuntime implements RuntimeAdapter {
       storageNamespace: `tmpfs-${pending.request.sessionId}`,
       signalingEndpoint: "ws://127.0.0.1:49152/internal/v1/signaling",
       signalingSecret: "A".repeat(43),
+      tabControlEndpoint: "http://127.0.0.1:49152/internal/v1/tabs",
     });
   }
 

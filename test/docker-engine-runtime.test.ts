@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createServer, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
 
@@ -78,6 +80,7 @@ test("Docker runtime applies the tenant isolation contract", async () => {
   assert.match(resource.signalingSecret, /^[A-Za-z0-9_-]{43}$/);
   assert.ok(body.Env.includes(`FIREBALL_INTERNAL_SIGNALING_SECRET=${resource.signalingSecret}`));
   assert.equal(resource.signalingEndpoint, "ws://127.0.0.1:49152/internal/v1/signaling");
+  assert.equal(resource.tabControlEndpoint, "http://127.0.0.1:49152/internal/v1/tabs");
 });
 
 test("Docker runtime bind-mounts TURN credentials read-only without exposing them in Env", async () => {
@@ -267,6 +270,7 @@ test("Docker runtime cleanup is idempotent when resources are already absent", a
     storageNamespace: "missing-storage",
     signalingEndpoint: "ws://127.0.0.1:49152/internal/v1/signaling",
     signalingSecret: "A".repeat(43),
+    tabControlEndpoint: "http://127.0.0.1:49152/internal/v1/tabs",
   });
 
   assert.deepEqual(transport.calls[0]?.acceptedStatusCodes, [204, 404]);
@@ -337,6 +341,105 @@ test("startup reconciliation fails closed on an invalid Docker list response", a
   );
 });
 
+test("Docker runtime sends authenticated tab commands to the exact tenant container endpoint", async (context) => {
+  const firstTabId = "11111111-1111-4111-8111-111111111111";
+  const secondTabId = "22222222-2222-4222-8222-222222222222";
+  const observed: Array<{ readonly method: string; readonly path: string; readonly auth: string; readonly body: string }> = [];
+  const server = createServer((incoming, response) => {
+    const chunks: Buffer[] = [];
+    incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
+    incoming.on("end", () => {
+      observed.push({
+        method: incoming.method ?? "",
+        path: incoming.url ?? "",
+        auth: incoming.headers.authorization ?? "",
+        body: Buffer.concat(chunks).toString("utf8"),
+      });
+      const first = tabFixture(firstTabId, "fireball://home", true);
+      const second = tabFixture(secondTabId, "https://example.com/", false);
+      if (incoming.method === "GET" && incoming.url === "/internal/v1/tabs") {
+        sendJsonFixture(response, 200, { tabs: [first, second] });
+      } else if (incoming.method === "POST" && incoming.url === "/internal/v1/tabs") {
+        sendJsonFixture(response, 201, { tab: { ...second, active: true } });
+      } else if (incoming.method === "PUT" && incoming.url === `/internal/v1/tabs/${firstTabId}/active`) {
+        sendJsonFixture(response, 200, { tab: first });
+      } else if (incoming.method === "PUT" && incoming.url === `/internal/v1/tabs/${firstTabId}/navigation`) {
+        sendJsonFixture(response, 200, { tab: { ...first, url: "https://example.org/path" } });
+      } else if (incoming.method === "DELETE" && incoming.url === `/internal/v1/tabs/${secondTabId}`) {
+        response.writeHead(204).end();
+      } else {
+        response.writeHead(404).end();
+      }
+    });
+  });
+  const port = await listenOnLoopback(server);
+  context.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const runtime = makeRuntime(new RecordingTransport([]));
+  const resource = tabResource(port);
+
+  assert.equal((await runtime.listTabs(resource)).length, 2);
+  assert.equal((await runtime.createTab(resource, "https://example.com/")).id, secondTabId);
+  assert.equal((await runtime.activateTab(resource, firstTabId)).id, firstTabId);
+  assert.equal((await runtime.navigateTab(resource, firstTabId, "https://example.org/path")).url, "https://example.org/path");
+  await runtime.deleteTab(resource, secondTabId);
+
+  assert.deepEqual(observed.map(({ method, path, body }) => ({ method, path, body })), [
+    { method: "GET", path: "/internal/v1/tabs", body: "" },
+    { method: "POST", path: "/internal/v1/tabs", body: JSON.stringify({ url: "https://example.com/" }) },
+    { method: "PUT", path: `/internal/v1/tabs/${firstTabId}/active`, body: "" },
+    {
+      method: "PUT",
+      path: `/internal/v1/tabs/${firstTabId}/navigation`,
+      body: JSON.stringify({ url: "https://example.org/path" }),
+    },
+    { method: "DELETE", path: `/internal/v1/tabs/${secondTabId}`, body: "" },
+  ]);
+  assert.deepEqual(new Set(observed.map(({ auth }) => auth)), new Set([`Bearer ${resource.signalingSecret}`]));
+});
+
+test("Docker runtime rejects malformed tab snapshots and sanitizes runtime errors", async (context) => {
+  const server = createServer((incoming, response) => {
+    if (incoming.method === "GET") {
+      const duplicate = tabFixture("11111111-1111-4111-8111-111111111111", "fireball://home", true);
+      sendJsonFixture(response, 200, { tabs: [duplicate, duplicate] });
+      return;
+    }
+    sendJsonFixture(response, 409, {
+      error: { code: "TAB_LIMIT_REACHED", message: "hostile runtime detail\nmust not cross the boundary" },
+    });
+  });
+  const port = await listenOnLoopback(server);
+  context.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const runtime = makeRuntime(new RecordingTransport([]));
+  const resource = tabResource(port);
+
+  await assert.rejects(
+    runtime.listTabs(resource),
+    (error: unknown) => error instanceof OrchestratorError
+      && error.code === "TAB_RUNTIME_UNAVAILABLE"
+      && error.statusCode === 503,
+  );
+  await assert.rejects(
+    runtime.createTab(resource),
+    (error: unknown) => error instanceof OrchestratorError
+      && error.code === "TAB_LIMIT_REACHED"
+      && error.message === "session tab limit reached",
+  );
+});
+
+test("Docker runtime rejects a mismatched signaling/control endpoint before making a request", async () => {
+  const runtime = makeRuntime(new RecordingTransport([]));
+  const resource = {
+    ...tabResource(49_152),
+    signalingEndpoint: "ws://127.0.0.1:49153/internal/v1/signaling",
+  };
+
+  await assert.rejects(
+    runtime.listTabs(resource),
+    (error: unknown) => error instanceof OrchestratorError && error.code === "TAB_RUNTIME_UNAVAILABLE",
+  );
+});
+
 function makeRuntime(
   transport: DockerEngineTransport,
   overrides: {
@@ -395,4 +498,36 @@ function signalingInspect(hostPort: string, healthStatus = "healthy"): unknown {
       Ports: { "8444/tcp": [{ HostIp: "127.0.0.1", HostPort: hostPort }] },
     },
   };
+}
+
+function tabResource(port: number) {
+  return {
+    containerId: "container-1",
+    containerName: "fireball-session-1",
+    networkNamespace: "fireball-network-1",
+    storageNamespace: "fireball-storage-1",
+    signalingEndpoint: `ws://127.0.0.1:${port}/internal/v1/signaling`,
+    signalingSecret: "A".repeat(43),
+    tabControlEndpoint: `http://127.0.0.1:${port}/internal/v1/tabs`,
+  };
+}
+
+function tabFixture(id: string, url: string, active: boolean) {
+  return { id, url, active, createdAt: "2026-08-21T00:00:00.000Z" };
+}
+
+async function listenOnLoopback(server: ReturnType<typeof createServer>): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  return (server.address() as AddressInfo).port;
+}
+
+function sendJsonFixture(
+  response: ServerResponse,
+  status: number,
+  body: unknown,
+): void {
+  response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
 }

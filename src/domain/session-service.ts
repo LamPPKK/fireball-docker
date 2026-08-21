@@ -10,6 +10,7 @@ import type {
   SignalingAuthorization,
   SignalingTicketIssueResult,
   SignalingTokenExchangeResult,
+  TabView,
   TenantContext,
 } from "./types.js";
 import type { RuntimeAdapter } from "../runtime/runtime-adapter.js";
@@ -130,6 +131,26 @@ export class SessionService {
     return this.rotateSignalingTicket(sessionKey);
   }
 
+  public async listTabs(context: TenantContext, id: string): Promise<readonly TabView[]> {
+    return await this.runtime.listTabs(this.activeRuntime(context, id));
+  }
+
+  public async createTab(context: TenantContext, id: string, url?: string): Promise<TabView> {
+    return await this.runtime.createTab(this.activeRuntime(context, id), url);
+  }
+
+  public async activateTab(context: TenantContext, id: string, tabId: string): Promise<TabView> {
+    return await this.runtime.activateTab(this.activeRuntime(context, id), tabId);
+  }
+
+  public async navigateTab(context: TenantContext, id: string, tabId: string, url: string): Promise<TabView> {
+    return await this.runtime.navigateTab(this.activeRuntime(context, id), tabId, url);
+  }
+
+  public async deleteTab(context: TenantContext, id: string, tabId: string): Promise<void> {
+    await this.runtime.deleteTab(this.activeRuntime(context, id), tabId);
+  }
+
   public exchangeSignalingTicket(ticket: string): SignalingTokenExchangeResult {
     const ticketHash = hashPresentedCredential(ticket);
     const binding = this.pairingTickets.get(ticketHash);
@@ -193,6 +214,15 @@ export class SessionService {
 
   private key(tenantId: string, id: string): string {
     return `${tenantId}:${id}`;
+  }
+
+  private activeRuntime(context: TenantContext, id: string): SessionRecord["runtime"] {
+    const record = this.sessions.get(this.key(context.tenantId, id));
+    if (!record) throw new OrchestratorError("SESSION_NOT_FOUND", "session not found", 404);
+    if (record.phase !== "active") {
+      throw new OrchestratorError("TAB_RUNTIME_UNAVAILABLE", "session tab runtime is not active", 409);
+    }
+    return record.runtime;
   }
 
   private reserve(id: string, tenantId: string): void {

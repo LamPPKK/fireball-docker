@@ -298,9 +298,10 @@ function killPipeline(containerId) {
   const program = [
     "const fs=require('fs');let killed=0;",
     "for(const name of fs.readdirSync('/proc')){if(!/^\\d+$/.test(name))continue;try{",
-    "if(fs.readFileSync('/proc/'+name+'/comm','utf8').trim()==='gst-launch-1.0'){process.kill(Number(name),'SIGKILL');killed++;}",
+    "const argv=fs.readFileSync('/proc/'+name+'/cmdline').toString('utf8').split('\\0');",
+    "if(argv[0]==='/usr/bin/fireball-session-runtime'){process.kill(Number(name),'SIGKILL');killed++;}",
     "}catch{}}",
-    "if(killed!==1){process.stderr.write('expected one gst-launch-1.0 process, killed '+killed+'\\n');process.exit(42)}",
+    "if(killed!==1){process.stderr.write('expected one Fireball native runtime, killed '+killed+'\\n');process.exit(42)}",
   ].join("");
   docker(["exec", containerId, "/usr/bin/node", "-e", program]);
 }

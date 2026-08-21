@@ -6,7 +6,7 @@ import {
   parseAuthenticationFrame,
   parseConfiguration,
   parseIceServerConfiguration,
-  pipelineArguments,
+  runtimeArguments,
   validateIceServerFileMetadata,
 } from "../supervisor.mjs";
 
@@ -49,27 +49,22 @@ test("configuration validates secret, profile, and navigation scheme", () => {
   );
 });
 
-test("pipeline is one WPE source with explicit H264, Opus, control, and no public STUN", () => {
+test("native runtime receives one initial tab with explicit stream and ICE configuration", () => {
   const configuration = parseConfiguration({ FIREBALL_INTERNAL_SIGNALING_SECRET: secret });
-  const argumentsList = pipelineArguments(configuration);
+  const argumentsList = runtimeArguments(configuration, "00000000-0000-4000-8000-000000000001");
   const command = argumentsList.join(" ");
 
-  assert.equal(argumentsList.filter((argument) => argument === "wpesrc").length, 1);
-  assert.match(command, /video\/x-raw,format=BGRA/);
-  assert.doesNotMatch(command, /gldownload/);
-  assert.match(command, /openh264enc/);
-  assert.match(command, /video\/x-h264,profile=constrained-baseline/);
-  assert.match(command, /opusenc bitrate=64000/);
-  assert.match(command, /audiotestsrc wave=silence is-live=true do-timestamp=true/);
-  assert.match(command, /audiomixer name=audio_mix/);
-  assert.match(command, /audio\/x-raw,format=S16LE,rate=48000,channels=2/);
-  assert.match(command, /web\.audio_0 .* audio_mix\./);
-  assert.equal(argumentsList.filter((argument) => argument === "opusenc").length, 1);
-  assert.match(command, /enable-control-data-channel=true/);
-  assert.match(command, /run-web-server=false/);
-  assert.match(command, /signalling-server-host=127\.0\.0\.1/);
-  assert.ok(argumentsList.includes('stun-server=""'));
-  assert.equal(argumentsList.indexOf('stun-server=""') + 1, argumentsList.indexOf("ice-transport-policy=all"));
+  assert.deepEqual(argumentsList.slice(0, 8), [
+    "--width", "1280", "--height", "720", "--fps", "15", "--bitrate", "3000000",
+  ]);
+  assert.equal(argumentsList[argumentsList.indexOf("--initial-tab-id") + 1], "00000000-0000-4000-8000-000000000001");
+  assert.equal(
+    Buffer.from(argumentsList[argumentsList.indexOf("--initial-url-hex") + 1], "hex").toString("utf8"),
+    "file:///usr/share/fireball-session/home.html",
+  );
+  assert.equal(argumentsList[argumentsList.indexOf("--stun-server") + 1], "");
+  assert.equal(argumentsList[argumentsList.indexOf("--turn-servers") + 1], "");
+  assert.equal(argumentsList[argumentsList.indexOf("--ice-policy") + 1], "all");
   assert.doesNotMatch(command, /stun\.l\.google\.com/);
   assert.doesNotMatch(command, new RegExp(secret));
 });
@@ -103,12 +98,16 @@ test("TURN configuration is strict and becomes explicit GStreamer ICE policy", (
     },
     () => parseIceServerConfiguration(source),
   );
-  const argumentsList = pipelineArguments(configuration);
-  assert.ok(argumentsList.includes("stun-server=stun://stun.example.com:3478"));
-  assert.ok(argumentsList.includes(
-    "turn-servers=<\"turns://tenant%3Aalpha:temporary%2Fcredential@turn.example.com:5349\",\"turn://tenant:credential@[2001:db8::2]:3478\">",
-  ));
-  assert.ok(argumentsList.includes("ice-transport-policy=relay"));
+  const argumentsList = runtimeArguments(configuration, "00000000-0000-4000-8000-000000000001");
+  assert.equal(
+    argumentsList[argumentsList.indexOf("--stun-server") + 1],
+    "stun://stun.example.com:3478",
+  );
+  assert.equal(
+    argumentsList[argumentsList.indexOf("--turn-servers") + 1],
+    "<\"turns://tenant%3Aalpha:temporary%2Fcredential@turn.example.com:5349\",\"turn://tenant:credential@[2001:db8::2]:3478\">",
+  );
+  assert.equal(argumentsList[argumentsList.indexOf("--ice-policy") + 1], "relay");
 
   const relayOnly = parseConfiguration(
     {
@@ -127,14 +126,13 @@ test("TURN configuration is strict and becomes explicit GStreamer ICE policy", (
       ice_transport_policy: "relay",
     })),
   );
-  const relayOnlyArguments = pipelineArguments(relayOnly);
-  const stunIndex = relayOnlyArguments.indexOf('stun-server=""');
-  assert.notEqual(stunIndex, -1);
-  assert.deepEqual(relayOnlyArguments.slice(stunIndex, stunIndex + 3), [
-    'stun-server=""',
-    'turn-servers=<"turn://tenant:credential@turn.example.com:3478">',
-    "ice-transport-policy=relay",
-  ]);
+  const relayOnlyArguments = runtimeArguments(relayOnly, "00000000-0000-4000-8000-000000000001");
+  assert.equal(relayOnlyArguments[relayOnlyArguments.indexOf("--stun-server") + 1], "");
+  assert.equal(
+    relayOnlyArguments[relayOnlyArguments.indexOf("--turn-servers") + 1],
+    "<\"turn://tenant:credential@turn.example.com:3478\">",
+  );
+  assert.equal(relayOnlyArguments[relayOnlyArguments.indexOf("--ice-policy") + 1], "relay");
 });
 
 test("TURN configuration rejects ambiguous, credential-free, duplicate, and unsafe input", () => {

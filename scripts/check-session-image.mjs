@@ -7,11 +7,14 @@ const dockerfile = await readFile(new URL("../session/Dockerfile", import.meta.u
 const manifest = JSON.parse(await readFile(new URL("../session/image-manifest.json", import.meta.url), "utf8"));
 const packageLock = JSON.parse(await readFile(new URL("../session/package-lock.json", import.meta.url), "utf8"));
 const supervisor = await readFile(new URL("../session/supervisor.mjs", import.meta.url), "utf8");
+const tabControl = await readFile(new URL("../session/tab-control.mjs", import.meta.url), "utf8");
+const nativeRuntime = await readFile(new URL("../session/fireball-session-runtime.cc", import.meta.url), "utf8");
 const bwrapWrapper = await readFile(new URL("../session/fireball-bwrap-wrapper.c", import.meta.url), "utf8");
 const containerSmoke = await readFile(new URL("../session/container-smoke.mjs", import.meta.url), "utf8");
 const isolationGate = await readFile(new URL("./real-isolation-gate.mjs", import.meta.url), "utf8");
 const browserStateGate = await readFile(new URL("./real-browser-state-gate.mjs", import.meta.url), "utf8");
 const restartCrashGate = await readFile(new URL("./real-restart-crash-gate.mjs", import.meta.url), "utf8");
+const multiTabGate = await readFile(new URL("./real-multi-tab-gate.mjs", import.meta.url), "utf8");
 const nginxTlsGate = await readFile(new URL("./real-nginx-tls-gate.mjs", import.meta.url), "utf8");
 const browserStateServer = await readFile(new URL("./fixtures/browser-state-server.mjs", import.meta.url), "utf8");
 const mediaGate = await readFile(new URL("./real-media-gate.mjs", import.meta.url), "utf8");
@@ -98,6 +101,9 @@ for (const required of [
   "gst-inspect-1.0 audiomixer",
   "gst-inspect-1.0 nicesrc",
   "bwrap-wrapper-builder",
+  "session-runtime-builder",
+  "libgstreamer1.0-dev",
+  "/fireball-session-runtime /usr/bin/fireball-session-runtime",
   "mv /usr/bin/bwrap /usr/lib/fireball/bwrap.real",
   "/fireball-bwrap /usr/bin/bwrap",
   "USER 10001:10001",
@@ -118,14 +124,22 @@ assert.doesNotMatch(bwrapWrapper, /system\s*\(|popen\s*\(|seccomp=unconfined/);
 assert.equal(packageLock.lockfileVersion, 3);
 assert.equal(packageLock.packages["node_modules/ws"].version, "8.21.3");
 assert.match(packageLock.packages["node_modules/ws"].integrity, /^sha512-/);
-assert.match(supervisor, /run-web-server=false/);
-assert.match(supervisor, /stun-server=/);
-assert.match(supervisor, /turn-servers=/);
-assert.match(supervisor, /ice-transport-policy=/);
-assert.match(supervisor, /video\/x-raw,format=BGRA/);
-assert.match(supervisor, /audiotestsrc/);
-assert.match(supervisor, /audiomixer/);
-assert.doesNotMatch(supervisor, /gldownload/);
+assert.match(nativeRuntime, /run-web-server=false/);
+assert.match(supervisor, /--stun-server/);
+assert.match(supervisor, /--turn-servers/);
+assert.match(supervisor, /--ice-policy/);
+assert.match(nativeRuntime, /video\/x-raw,format=BGRA/);
+assert.match(nativeRuntime, /audiotestsrc/);
+assert.match(nativeRuntime, /audiomixer/);
+assert.match(nativeRuntime, /input-selector name=video_selector/);
+assert.match(nativeRuntime, /input-selector name=audio_selector/);
+assert.match(nativeRuntime, /constexpr std::size_t kMaximumTabs = 4/);
+assert.match(nativeRuntime, /g_signal_connect\(tab->source, "pad-added"/);
+assert.match(nativeRuntime, /g_object_set\(video_selector_, "active-pad"/);
+assert.match(tabControl, /class TabController/);
+assert.match(tabControl, /class NativeTabDriver/);
+assert.match(supervisor, /\/internal\/v1\/tabs/);
+assert.doesNotMatch(nativeRuntime, /gldownload/);
 assert.doesNotMatch(supervisor, /stun\.l\.google\.com/);
 assert.match(dockerfile, /install -d -o root -g 10001 -m 0750 \/run\/fireball-secrets/);
 for (const required of [
@@ -141,6 +155,7 @@ for (const required of [
 }
 assert.match(imageWorkflow, /npm run container:smoke --prefix session/);
 assert.match(imageWorkflow, /npm run session:isolation:smoke/);
+assert.match(imageWorkflow, /npm run session:multi-tab:smoke/);
 assert.match(imageWorkflow, /npm run session:media:smoke/);
 assert.match(imageWorkflow, /npm run session:turn:smoke/);
 assert.match(imageWorkflow, /Smoke rswebrtc H\.264, Opus, control, reconnect, and burn/);
@@ -235,6 +250,19 @@ for (const required of [
 }
 assert.doesNotMatch(restartCrashGate, /--privileged|seccomp=unconfined|systempaths=unconfined/);
 for (const required of [
+  "tabs.length, 4",
+  "TAB_LIMIT_REACHED",
+  "TAB_MINIMUM_REACHED",
+  "expectTenantDenied",
+  "assertRuntimeIdentity",
+  "/usr/bin/fireball-session-runtime",
+  "managedContainers().length, 0",
+  "managedNetworks().length, 0",
+]) {
+  assert.ok(multiTabGate.includes(required), `multi-tab gate is missing: ${required}`);
+}
+assert.doesNotMatch(multiTabGate, /--privileged|seccomp=unconfined|systempaths=unconfined/);
+for (const required of [
   "renderNginxConfig",
   'sudoNginx(["-t"])',
   'assert.equal(health.headers["strict-transport-security"]',
@@ -273,6 +301,8 @@ for (const required of [
   "session:browser-state:smoke",
   "Smoke restart reconciliation and pipeline crash containment",
   "session:restart-crash:smoke",
+  "Smoke one-container four-tab lifecycle",
+  "session:multi-tab:smoke",
   "Smoke nginx -t and external TLS/WebSocket deployment",
   "session:nginx-tls:smoke",
 ]) {
@@ -291,6 +321,7 @@ for (const required of [
   "Prove exact-digest two-tenant isolation",
   "Prove exact-digest browser-state isolation and burn cleanup",
   "Prove exact-digest restart reconciliation and pipeline crash containment",
+  "Prove exact-digest one-container four-tab lifecycle",
   "Prove exact-digest nginx -t and external TLS/WebSocket deployment",
   "Prove exact-digest H.264, Opus, control, reconnect, and burn",
   "Prove exact-digest relay-only TURN twice",

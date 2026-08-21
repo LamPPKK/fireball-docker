@@ -22,6 +22,14 @@ export interface RuntimeResource {
   readonly storageNamespace: string;
   readonly signalingEndpoint: string;
   readonly signalingSecret: string;
+  readonly tabControlEndpoint: string;
+}
+
+export interface TabView {
+  readonly id: string;
+  readonly url: string;
+  readonly createdAt: string;
+  readonly active: boolean;
 }
 
 export interface SessionRecord {

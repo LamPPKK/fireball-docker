@@ -121,6 +121,12 @@ jobs:
         env:
           FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
           FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
+      - name: Smoke one-container four-tab lifecycle
+        run: npm run session:multi-tab:smoke -- "fireball/session-wpe:test-${{ matrix.suffix }}" "${{ matrix.platform }}"
+        env:
+          FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
+          FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
+          FIREBALL_SMOKE_ICE_SERVERS_FILE: /tmp/fireball-ice-${{ matrix.suffix }}.json
       - name: Smoke nginx -t and external TLS/WebSocket deployment
         run: npm run session:nginx-tls:smoke -- "fireball/session-wpe:test-${{ matrix.suffix }}" "${{ matrix.platform }}"
         env:

@@ -5,7 +5,7 @@ import WebSocket, { WebSocketServer, type RawData } from "ws";
 import { DevelopmentAuthenticator } from "../src/auth/authenticator.js";
 import { buildApp } from "../src/app.js";
 import { SessionService } from "../src/domain/session-service.js";
-import type { RuntimeResource } from "../src/domain/types.js";
+import type { RuntimeResource, TabView } from "../src/domain/types.js";
 import type {
   CreateRuntimeRequest,
   ReconciliationResult,
@@ -235,6 +235,7 @@ class FixedRuntime implements RuntimeAdapter {
       storageNamespace: `tmpfs-${request.sessionId}`,
       signalingEndpoint: this.signalingEndpoint,
       signalingSecret: internalSecret,
+      tabControlEndpoint: "http://127.0.0.1:1/internal/v1/tabs",
     };
   }
 
@@ -245,6 +246,14 @@ class FixedRuntime implements RuntimeAdapter {
   public async reconcile(): Promise<ReconciliationResult> {
     return { containersRemoved: 0, networksRemoved: 0 };
   }
+
+  public async listTabs(_resource: RuntimeResource): Promise<readonly TabView[]> { return []; }
+  public async createTab(_resource: RuntimeResource, _url?: string): Promise<TabView> { throw new Error("unused"); }
+  public async activateTab(_resource: RuntimeResource, _tabId: string): Promise<TabView> { throw new Error("unused"); }
+  public async navigateTab(_resource: RuntimeResource, _tabId: string, _url: string): Promise<TabView> {
+    throw new Error("unused");
+  }
+  public async deleteTab(_resource: RuntimeResource, _tabId: string): Promise<void> { throw new Error("unused"); }
 }
 
 function nextMessage(socket: WebSocket): Promise<{ text: string; isBinary: boolean }> {

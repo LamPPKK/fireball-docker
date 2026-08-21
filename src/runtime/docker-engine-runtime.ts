@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
+import { request as httpRequest } from "node:http";
 import { isAbsolute, normalize } from "node:path";
 
 import { OrchestratorError } from "../domain/errors.js";
-import type { RuntimeResource } from "../domain/types.js";
+import type { ErrorCode } from "../domain/errors.js";
+import type { RuntimeResource, TabView } from "../domain/types.js";
 import {
   UnixSocketDockerEngineTransport,
   type DockerContainerInspectResponse,
@@ -35,6 +37,7 @@ export class DockerEngineRuntime implements RuntimeAdapter {
   private readonly transport: DockerEngineTransport;
   private readonly startupHealthAttempts: number;
   private readonly startupHealthIntervalMs: number;
+  private readonly controlRequestTimeoutMs: number;
 
   public constructor(
     private readonly options: DockerEngineOptions,
@@ -67,6 +70,7 @@ export class DockerEngineRuntime implements RuntimeAdapter {
       options.requestTimeoutMs ?? 30_000,
       "Docker Engine request timeout",
     );
+    this.controlRequestTimeoutMs = requestTimeoutMs;
     this.transport = transport ?? new UnixSocketDockerEngineTransport(options.socketPath, requestTimeoutMs);
   }
 
@@ -149,6 +153,7 @@ export class DockerEngineRuntime implements RuntimeAdapter {
         storageNamespace: `/run/fireball-session:${response.Id}`,
         signalingEndpoint: `ws://${SIGNALING_HOST}:${signalingPort}/internal/v1/signaling`,
         signalingSecret,
+        tabControlEndpoint: `http://${SIGNALING_HOST}:${signalingPort}/internal/v1/tabs`,
       };
     } catch (error) {
       const rollbackFailures: string[] = [];
@@ -229,6 +234,49 @@ export class DockerEngineRuntime implements RuntimeAdapter {
     return { containersRemoved, networksRemoved };
   }
 
+  public async listTabs(resource: RuntimeResource): Promise<readonly TabView[]> {
+    const body = await this.controlRequest(resource, "GET", "", undefined, 200);
+    if (!isObject(body) || !Array.isArray(body.tabs)) throw invalidTabRuntimeResponse();
+    const tabs = body.tabs.map((value) => parseTabView(value));
+    if (
+      tabs.length < 1
+      || tabs.length > 4
+      || new Set(tabs.map((tab) => tab.id)).size !== tabs.length
+      || tabs.filter((tab) => tab.active).length !== 1
+    ) {
+      throw invalidTabRuntimeResponse();
+    }
+    return tabs;
+  }
+
+  public async createTab(resource: RuntimeResource, url?: string): Promise<TabView> {
+    const body = await this.controlRequest(resource, "POST", "", url === undefined ? {} : { url }, 201);
+    if (!isObject(body)) throw invalidTabRuntimeResponse();
+    return parseTabView(body.tab);
+  }
+
+  public async activateTab(resource: RuntimeResource, tabId: string): Promise<TabView> {
+    const body = await this.controlRequest(resource, "PUT", `/${encodeURIComponent(tabId)}/active`, undefined, 200);
+    if (!isObject(body)) throw invalidTabRuntimeResponse();
+    return parseTabView(body.tab);
+  }
+
+  public async navigateTab(resource: RuntimeResource, tabId: string, url: string): Promise<TabView> {
+    const body = await this.controlRequest(
+      resource,
+      "PUT",
+      `/${encodeURIComponent(tabId)}/navigation`,
+      { url },
+      200,
+    );
+    if (!isObject(body)) throw invalidTabRuntimeResponse();
+    return parseTabView(body.tab);
+  }
+
+  public async deleteTab(resource: RuntimeResource, tabId: string): Promise<void> {
+    await this.controlRequest(resource, "DELETE", `/${encodeURIComponent(tabId)}`, undefined, 204);
+  }
+
   private async listManagedContainers(): Promise<readonly unknown[]> {
     const response = await this.call<unknown>(
       "GET",
@@ -239,6 +287,73 @@ export class DockerEngineRuntime implements RuntimeAdapter {
       throw new OrchestratorError("RUNTIME_FAILURE", "Docker Engine returned an invalid container list", 503);
     }
     return response;
+  }
+
+  private async controlRequest(
+    resource: RuntimeResource,
+    method: "GET" | "POST" | "PUT" | "DELETE",
+    suffix: string,
+    body: unknown,
+    expectedStatus: number,
+  ): Promise<unknown> {
+    const endpoint = validateTabControlResource(resource);
+    const encoded = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
+    return await new Promise<unknown>((resolve, reject) => {
+      const request = httpRequest({
+        protocol: "http:",
+        hostname: endpoint.hostname,
+        port: endpoint.port,
+        method,
+        path: `${endpoint.pathname}${suffix}`,
+        headers: {
+          authorization: `Bearer ${resource.signalingSecret}`,
+          connection: "close",
+          ...(encoded === undefined ? {} : {
+            "content-type": "application/json",
+            "content-length": String(encoded.length),
+          }),
+        },
+      });
+      const timeout = setTimeout(() => request.destroy(new Error("tab runtime request timed out")), this.controlRequestTimeoutMs);
+      timeout.unref();
+      request.once("response", (response) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        response.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > 64 * 1024) response.destroy(new Error("tab runtime response is too large"));
+          else chunks.push(chunk);
+        });
+        response.once("error", (error) => {
+          clearTimeout(timeout);
+          reject(tabRuntimeUnavailable(error));
+        });
+        response.once("end", () => {
+          clearTimeout(timeout);
+          const source = Buffer.concat(chunks).toString("utf8");
+          if (response.statusCode === expectedStatus) {
+            if (expectedStatus === 204) {
+              if (source !== "") reject(invalidTabRuntimeResponse());
+              else resolve(undefined);
+              return;
+            }
+            try {
+              resolve(JSON.parse(source));
+            } catch {
+              reject(invalidTabRuntimeResponse());
+            }
+            return;
+          }
+          reject(parseTabRuntimeError(response.statusCode, source));
+        });
+      });
+      request.once("error", (error) => {
+        clearTimeout(timeout);
+        reject(tabRuntimeUnavailable(error));
+      });
+      if (encoded) request.end(encoded);
+      else request.end();
+    });
   }
 
   private async waitForHealthy(containerId: string): Promise<DockerContainerInspectResponse> {
@@ -375,4 +490,115 @@ function publishedSignalingPort(inspect: DockerContainerInspectResponse): number
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "unknown runtime failure";
+}
+
+function validateTabControlResource(resource: RuntimeResource): URL {
+  let endpoint: URL;
+  let signaling: URL;
+  try {
+    endpoint = new URL(resource.tabControlEndpoint);
+    signaling = new URL(resource.signalingEndpoint);
+  } catch {
+    throw invalidTabRuntimeResponse();
+  }
+  if (
+    endpoint.protocol !== "http:"
+    || endpoint.hostname !== SIGNALING_HOST
+    || endpoint.username !== ""
+    || endpoint.password !== ""
+    || endpoint.pathname !== "/internal/v1/tabs"
+    || endpoint.search !== ""
+    || endpoint.hash !== ""
+    || !/^[1-9][0-9]{0,4}$/.test(endpoint.port)
+    || Number(endpoint.port) > 65_535
+    || signaling.protocol !== "ws:"
+    || signaling.hostname !== endpoint.hostname
+    || signaling.port !== endpoint.port
+    || signaling.username !== ""
+    || signaling.password !== ""
+    || signaling.pathname !== "/internal/v1/signaling"
+    || signaling.search !== ""
+    || signaling.hash !== ""
+    || !/^[A-Za-z0-9_-]{43}$/.test(resource.signalingSecret)
+  ) {
+    throw invalidTabRuntimeResponse();
+  }
+  return endpoint;
+}
+
+function parseTabView(value: unknown): TabView {
+  if (
+    !isObject(value)
+    || Object.keys(value).sort().join(",") !== "active,createdAt,id,url"
+    || typeof value.id !== "string"
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.id)
+    || typeof value.url !== "string"
+    || !isPublicTabUrl(value.url)
+    || typeof value.createdAt !== "string"
+    || !isCanonicalTimestamp(value.createdAt)
+    || typeof value.active !== "boolean"
+  ) {
+    throw invalidTabRuntimeResponse();
+  }
+  return { id: value.id, url: value.url, createdAt: value.createdAt, active: value.active };
+}
+
+function parseTabRuntimeError(status: number | undefined, source: string): OrchestratorError {
+  let document: unknown;
+  try {
+    document = JSON.parse(source);
+  } catch {
+    return invalidTabRuntimeResponse();
+  }
+  if (
+    !isObject(document)
+    || Object.keys(document).join(",") !== "error"
+    || !isObject(document.error)
+    || Object.keys(document.error).sort().join(",") !== "code,message"
+  ) {
+    return invalidTabRuntimeResponse();
+  }
+  const code = document.error.code;
+  const expected = new Map<string, { readonly status: number; readonly code: ErrorCode; readonly message: string }>([
+    ["TAB_NOT_FOUND", { status: 404, code: "TAB_NOT_FOUND", message: "tab not found" }],
+    ["TAB_LIMIT_REACHED", { status: 409, code: "TAB_LIMIT_REACHED", message: "session tab limit reached" }],
+    ["TAB_MINIMUM_REACHED", { status: 409, code: "TAB_MINIMUM_REACHED", message: "a session must retain one tab" }],
+    ["TAB_URL_INVALID", { status: 400, code: "TAB_URL_INVALID", message: "tab URL is invalid" }],
+  ]);
+  const binding = typeof code === "string" ? expected.get(code) : undefined;
+  if (!binding || binding.status !== status || typeof document.error.message !== "string") {
+    return invalidTabRuntimeResponse();
+  }
+  return new OrchestratorError(binding.code, binding.message, binding.status);
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCanonicalTimestamp(value: string): boolean {
+  const time = Date.parse(value);
+  return Number.isFinite(time) && new Date(time).toISOString() === value;
+}
+
+function isPublicTabUrl(value: string): boolean {
+  if (value === "fireball://home") return true;
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol)
+      && url.username === ""
+      && url.password === ""
+      && url.hostname !== ""
+      && url.href === value;
+  } catch {
+    return false;
+  }
+}
+
+function invalidTabRuntimeResponse(): OrchestratorError {
+  return new OrchestratorError("TAB_RUNTIME_UNAVAILABLE", "tab runtime returned an invalid response", 503);
+}
+
+function tabRuntimeUnavailable(_error: unknown): OrchestratorError {
+  return new OrchestratorError("TAB_RUNTIME_UNAVAILABLE", "tab runtime is unavailable", 503);
 }

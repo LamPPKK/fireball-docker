@@ -48,6 +48,19 @@ RUN cc -std=c11 -O2 -Wall -Wextra -Werror \
       /src/fireball-bwrap-wrapper.c \
       -o /fireball-bwrap
 
+FROM ${DEBIAN_IMAGE} AS session-runtime-builder
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      g++ \
+      libgstreamer1.0-dev \
+      pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+COPY session/fireball-session-runtime.cc /src/fireball-session-runtime.cc
+RUN c++ -std=c++20 -O2 -Wall -Wextra -Werror \
+      /src/fireball-session-runtime.cc \
+      -o /fireball-session-runtime \
+      $(pkg-config --cflags --libs gstreamer-1.0 glib-2.0)
+
 FROM ${DEBIAN_IMAGE} AS runtime
 ARG GST_PLUGINS_RS_REV=0826007d970a473475b6bf993229ebcde173fdba
 ARG FIREBALL_SESSION_VERSION=0.1.0-dev.1
@@ -86,7 +99,8 @@ COPY --from=rswebrtc-builder /opt/fireball/lib/gstreamer-1.0/libgstrswebrtc.so /
 COPY --from=rswebrtc-builder /src/gst-plugins-rs/net/webrtc/LICENSE-MPL-2.0 /usr/share/fireball-session/LICENSE-rswebrtc-MPL-2.0
 COPY --from=node-dependencies /work/node_modules /opt/fireball-session/node_modules
 COPY --from=bwrap-wrapper-builder --chmod=0755 /fireball-bwrap /usr/bin/bwrap
-COPY --chown=10001:10001 session/supervisor.mjs session/healthcheck.mjs /opt/fireball-session/
+COPY --from=session-runtime-builder --chmod=0755 /fireball-session-runtime /usr/bin/fireball-session-runtime
+COPY --chown=10001:10001 session/supervisor.mjs session/tab-control.mjs session/healthcheck.mjs /opt/fireball-session/
 COPY --chown=10001:10001 session/home.html /usr/share/fireball-session/home.html
 
 ENV HOME=/run/fireball-session/home \
