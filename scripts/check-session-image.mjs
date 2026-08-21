@@ -10,6 +10,8 @@ const supervisor = await readFile(new URL("../session/supervisor.mjs", import.me
 const bwrapWrapper = await readFile(new URL("../session/fireball-bwrap-wrapper.c", import.meta.url), "utf8");
 const containerSmoke = await readFile(new URL("../session/container-smoke.mjs", import.meta.url), "utf8");
 const isolationGate = await readFile(new URL("./real-isolation-gate.mjs", import.meta.url), "utf8");
+const browserStateGate = await readFile(new URL("./real-browser-state-gate.mjs", import.meta.url), "utf8");
+const browserStateServer = await readFile(new URL("./fixtures/browser-state-server.mjs", import.meta.url), "utf8");
 const mediaGate = await readFile(new URL("./real-media-gate.mjs", import.meta.url), "utf8");
 const turnGate = await readFile(new URL("./real-turn-gate.mjs", import.meta.url), "utf8");
 const mediaFixture = await readFile(
@@ -193,6 +195,45 @@ for (const required of [
   assert.ok(isolationGate.includes(required), `real isolation gate is missing: ${required}`);
 }
 assert.doesNotMatch(isolationGate, /--privileged|seccomp=unconfined|systempaths=unconfined/);
+for (const required of [
+  "assertEmptyState(initialAlpha)",
+  "assertEmptyState(initialBeta)",
+  "assertMarkerState(await waitForReport(alphaContainer.Id, 1), alphaMarker)",
+  "assertEmptyState(await waitForReport(betaContainer.Id, 1))",
+  "assertMarkerState(await waitForReport(betaContainer.Id, 2), betaMarker)",
+  "assertMarkerState(await waitForReport(alphaContainer.Id, 2), alphaMarker)",
+  "assertEmptyState(await waitForReport(replacementContainer.Id, 0))",
+  "serviceWorkerRegistered",
+  "managedContainers(instanceId).length, 0",
+  "managedNetworks(instanceId).length, 0",
+]) {
+  assert.ok(browserStateGate.includes(required), `browser-state gate is missing: ${required}`);
+}
+assert.doesNotMatch(browserStateGate, /--privileged|seccomp=unconfined|systempaths=unconfined/);
+for (const required of [
+  'listen(LISTEN_PORT, LISTEN_HOST',
+  'navigator.serviceWorker.register(',
+  'localStorage.setItem(storageName, marker)',
+  'document.cookie = cookieName',
+  'navigator.serviceWorker.getRegistration("/")',
+  'spawn(process.execPath, [SUPERVISOR]',
+  '"content-security-policy"',
+  '"cache-control": "no-store"',
+]) {
+  assert.ok(browserStateServer.includes(required), `browser-state fixture server is missing: ${required}`);
+}
+assert.match(dockerfile, /FROM runtime AS browser-state-gate/);
+assert.match(dockerfile, /FIREBALL_START_URL=http:\/\/127\.0\.0\.1:18080\//);
+assert.match(dockerfile, /ENTRYPOINT \["\/usr\/bin\/node", "\/opt\/fireball-state-gate\/server\.mjs"\]/);
+assert.match(dockerfile, /FROM runtime AS release\s*$/);
+for (const required of [
+  "Build browser-state fixture layer",
+  "target: browser-state-gate",
+  "Smoke browser cookie, localStorage, service-worker, and burn isolation",
+  "session:browser-state:smoke",
+]) {
+  assert.ok(imageWorkflow.includes(required), `session-image workflow is missing: ${required}`);
+}
 for (const required of [
   "__FIREBALL_ICE_CONFIGURATION__",
   "new RTCPeerConnection(iceConfiguration)",

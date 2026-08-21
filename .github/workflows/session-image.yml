@@ -68,6 +68,16 @@ jobs:
           turnserver --version
       - name: Load WPE user-namespace AppArmor profile
         run: sudo apparmor_parser -r deploy/apparmor/fireball-session
+      - name: Build browser-state fixture layer
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: session/Dockerfile
+          target: browser-state-gate
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: fireball/session-browser-state:test-${{ matrix.suffix }}
+          cache-from: type=gha,scope=session-image-${{ matrix.suffix }}
       - name: Prepare TURN smoke fixtures
         run: |
           sudo install -o root -g 10001 -m 0440 session/test/fixtures/ice-servers.json "/tmp/fireball-ice-${{ matrix.suffix }}.json"
@@ -100,6 +110,11 @@ jobs:
           FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
           FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
           FIREBALL_SMOKE_ICE_SERVERS_FILE: /tmp/fireball-ice-${{ matrix.suffix }}.json
+      - name: Smoke browser cookie, localStorage, service-worker, and burn isolation
+        run: npm run session:browser-state:smoke -- "fireball/session-browser-state:test-${{ matrix.suffix }}" "${{ matrix.platform }}"
+        env:
+          FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
+          FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
       - name: Smoke rswebrtc H.264, Opus, control, reconnect, and burn
         run: npm run session:media:smoke -- "fireball/session-wpe:test-${{ matrix.suffix }}" "${{ matrix.platform }}"
         env:

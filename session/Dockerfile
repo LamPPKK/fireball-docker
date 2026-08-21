@@ -48,7 +48,7 @@ RUN cc -std=c11 -O2 -Wall -Wextra -Werror \
       /src/fireball-bwrap-wrapper.c \
       -o /fireball-bwrap
 
-FROM ${DEBIAN_IMAGE}
+FROM ${DEBIAN_IMAGE} AS runtime
 ARG GST_PLUGINS_RS_REV=0826007d970a473475b6bf993229ebcde173fdba
 ARG FIREBALL_SESSION_VERSION=0.1.0-dev.1
 LABEL org.opencontainers.image.title="Fireball WPE session" \
@@ -117,3 +117,10 @@ EXPOSE 8444
 HEALTHCHECK --interval=5s --timeout=2s --start-period=30s --retries=6 \
   CMD ["/usr/bin/node", "/opt/fireball-session/healthcheck.mjs"]
 ENTRYPOINT ["/usr/bin/node", "/opt/fireball-session/supervisor.mjs"]
+
+FROM runtime AS browser-state-gate
+COPY --chown=10001:10001 scripts/fixtures/browser-state-server.mjs /opt/fireball-state-gate/server.mjs
+ENV FIREBALL_START_URL=http://127.0.0.1:18080/
+ENTRYPOINT ["/usr/bin/node", "/opt/fireball-state-gate/server.mjs"]
+
+FROM runtime AS release
