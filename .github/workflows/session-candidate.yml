@@ -1,0 +1,422 @@
+name: session-candidate
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: session-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/lamppkk/fireball-session
+
+jobs:
+  build-test-attest-platform:
+    name: Build, test, attest ${{ matrix.platform }}
+    if: github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            suffix: amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            suffix: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out the candidate source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Build and push the platform image exactly once
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: session/Dockerfile
+          target: release
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ${{ env.IMAGE }}:qa-${{ github.sha }}-${{ matrix.suffix }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=session-candidate-${{ matrix.suffix }}
+          cache-to: type=gha,mode=max,scope=session-candidate-${{ matrix.suffix }}
+
+      - name: Resolve and lock the registry manifest
+        id: identity
+        env:
+          EXPECTED_DIGEST: ${{ steps.build.outputs.digest }}
+          PLATFORM: ${{ matrix.platform }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          artifact_directory="$RUNNER_TEMP/candidate-$SUFFIX"
+          mkdir -p "$artifact_directory"
+          candidate_reference="$IMAGE@$EXPECTED_DIGEST"
+          docker buildx imagetools inspect --raw "$candidate_reference" > "$artifact_directory/manifest-$SUFFIX.json"
+          actual_digest="sha256:$(sha256sum "$artifact_directory/manifest-$SUFFIX.json" | cut -d ' ' -f 1)"
+          test "$actual_digest" = "$EXPECTED_DIGEST"
+          docker pull --platform "$PLATFORM" "$candidate_reference"
+          docker image tag "$candidate_reference" "fireball/session-wpe:candidate-$SUFFIX"
+          {
+            printf 'artifact-directory=%s\n' "$artifact_directory"
+            printf 'digest=%s\n' "$EXPECTED_DIGEST"
+            printf 'reference=%s\n' "$candidate_reference"
+            printf 'runtime-tag=fireball/session-wpe:candidate-%s\n' "$SUFFIX"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Inspect WPE, rswebrtc, runtime metadata, and provenance inputs
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          RUNTIME_TAG: ${{ steps.identity.outputs.runtime-tag }}
+        run: |
+          set -euo pipefail
+          for plugin in wpesrc webrtcsink openh264enc nicesrc; do
+            docker run --rm --platform "$PLATFORM" --entrypoint gst-inspect-1.0 "$RUNTIME_TAG" "$plugin"
+          done
+          test "$(docker image inspect --format '{{.Config.User}}' "$RUNTIME_TAG")" = "10001:10001"
+          docker run --rm --platform "$PLATFORM" --entrypoint /usr/bin/node "$RUNTIME_TAG" --check /opt/fireball-session/supervisor.mjs
+          docker run --rm --platform "$PLATFORM" --entrypoint /usr/bin/bwrap "$RUNTIME_TAG" --version
+          docker run --rm --platform "$PLATFORM" --entrypoint test "$RUNTIME_TAG" -x /usr/lib/fireball/bwrap.real
+          docker run --rm --platform "$PLATFORM" --entrypoint /bin/sh "$RUNTIME_TAG" -eu -c "ldconfig -p | grep -F libGLESv2.so.2"
+          docker run --rm --platform "$PLATFORM" --entrypoint cat "$RUNTIME_TAG" /usr/share/fireball-session/component-versions.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            session/package-lock.json
+
+      - name: Build the orchestrator and test dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+          npm ci --prefix session --ignore-scripts
+
+      - name: Install pinned Firefox OpenH264 test codec
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          plugin_path="$(node scripts/install-firefox-openh264.mjs install "$PLATFORM" "$RUNNER_TEMP/fireball-openh264-$SUFFIX")"
+          printf 'MOZ_GMP_PATH=%s\n' "$plugin_path" >> "$GITHUB_ENV"
+
+      - name: Install ephemeral coturn test relay
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends coturn
+          turnserver --version
+
+      - name: Load WPE user-namespace AppArmor profile
+        run: sudo apparmor_parser -r deploy/apparmor/fireball-session
+
+      - name: Derive the CI-only browser-state layer from the exact digest
+        env:
+          BASE_IMAGE: ${{ steps.identity.outputs.reference }}
+          PLATFORM: ${{ matrix.platform }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          docker buildx build \
+            --file scripts/fixtures/browser-state-candidate.Dockerfile \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+            --platform "$PLATFORM" \
+            --load \
+            --tag "fireball/session-browser-state:candidate-$SUFFIX" \
+            .
+
+      - name: Prepare TURN smoke fixtures
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          sudo install -o root -g 10001 -m 0440 session/test/fixtures/ice-servers.json "/tmp/fireball-ice-$SUFFIX.json"
+          sudo install -o root -g 10001 -m 0444 session/test/fixtures/ice-servers.json "/tmp/fireball-ice-unsafe-$SUFFIX.json"
+
+      - name: Reject unsafe TURN secret permissions
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          RUNTIME_TAG: ${{ steps.identity.outputs.runtime-tag }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          set +e
+          output="$(docker run --rm --platform "$PLATFORM" \
+            --read-only \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges:true \
+            --tmpfs /run/fireball-session:rw,noexec,nosuid,nodev,size=256m,mode=0700,uid=10001,gid=10001 \
+            --mount "type=bind,source=/tmp/fireball-ice-unsafe-$SUFFIX.json,target=/run/fireball-secrets/ice-servers.json,readonly" \
+            --env FIREBALL_INTERNAL_SIGNALING_SECRET=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
+            --env FIREBALL_ICE_SERVERS_FILE=/run/fireball-secrets/ice-servers.json \
+            "$RUNTIME_TAG" 2>&1)"
+          status="$?"
+          set -e
+          test "$status" -ne 0
+          grep -F "must be owned by root:10001 with mode 0440" <<<"$output"
+
+      - name: Smoke the exact running session image
+        run: npm run container:smoke --prefix session -- "${{ steps.identity.outputs.runtime-tag }}" "${{ matrix.platform }}"
+        env:
+          FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
+          FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
+          FIREBALL_SMOKE_ICE_SERVERS_FILE: /tmp/fireball-ice-${{ matrix.suffix }}.json
+
+      - name: Prove exact-digest two-tenant isolation
+        run: npm run session:isolation:smoke -- "${{ steps.identity.outputs.runtime-tag }}" "${{ matrix.platform }}"
+        env:
+          FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
+          FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
+          FIREBALL_SMOKE_ICE_SERVERS_FILE: /tmp/fireball-ice-${{ matrix.suffix }}.json
+
+      - name: Prove exact-digest browser-state isolation and burn cleanup
+        run: npm run session:browser-state:smoke -- "fireball/session-browser-state:candidate-${{ matrix.suffix }}" "${{ matrix.platform }}"
+        env:
+          FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
+          FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
+
+      - name: Prove exact-digest H.264, Opus, control, reconnect, and burn
+        run: npm run session:media:smoke -- "${{ steps.identity.outputs.runtime-tag }}" "${{ matrix.platform }}"
+        env:
+          FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
+          FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
+          MOZ_LOG: GMP:5
+
+      - name: Prove exact-digest relay-only TURN twice
+        run: npm run session:turn:smoke -- "${{ steps.identity.outputs.runtime-tag }}" "${{ matrix.platform }}"
+        env:
+          FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
+          FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
+          MOZ_LOG: GMP:5
+
+      - name: Generate the exact-platform SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ steps.identity.outputs.reference }}
+          format: spdx-json
+          output-file: ${{ steps.identity.outputs.artifact-directory }}/sbom-${{ matrix.suffix }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Create and verify the platform evidence record
+        env:
+          ARTIFACT_DIRECTORY: ${{ steps.identity.outputs.artifact-directory }}
+          EXPECTED_DIGEST: ${{ steps.identity.outputs.digest }}
+          PLATFORM: ${{ matrix.platform }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          node scripts/session-candidate-evidence.mjs platform \
+            --image "$IMAGE" \
+            --source-commit "$GITHUB_SHA" \
+            --platform "$PLATFORM" \
+            --manifest "$ARTIFACT_DIRECTORY/manifest-$SUFFIX.json" \
+            --sbom "$ARTIFACT_DIRECTORY/sbom-$SUFFIX.spdx.json" \
+            --expected-digest "$EXPECTED_DIGEST" \
+            --output "$ARTIFACT_DIRECTORY/platform-$SUFFIX.json"
+
+      - name: Attest exact platform build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.identity.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest the exact platform SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.identity.outputs.digest }}
+          sbom-path: ${{ steps.identity.outputs.artifact-directory }}/sbom-${{ matrix.suffix }}.spdx.json
+          push-to-registry: true
+
+      - name: Upload the exact platform evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate-platform-${{ matrix.suffix }}
+          path: ${{ steps.identity.outputs.artifact-directory }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove TURN smoke fixtures
+        if: always()
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+        run: sudo rm -f "/tmp/fireball-ice-$SUFFIX.json" "/tmp/fireball-ice-unsafe-$SUFFIX.json"
+
+      - name: Report kernel sandbox denials
+        if: failure()
+        run: sudo journalctl --dmesg --since "10 minutes ago" --no-pager | grep -E -i 'apparmor|seccomp|audit.*denied' || true
+
+  promote-candidate-index:
+    name: Promote tested OCI index
+    needs: build-test-attest-platform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - name: Check out the exact source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download only the amd64 evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: candidate-platform-amd64
+          path: artifacts/amd64
+
+      - name: Download only the arm64 evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: candidate-platform-arm64
+          path: artifacts/arm64
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Read the validated platform digests
+        id: platforms
+        run: |
+          set -euo pipefail
+          amd64_digest="$(node scripts/session-candidate-evidence.mjs digest --record artifacts/amd64/platform-amd64.json)"
+          arm64_digest="$(node scripts/session-candidate-evidence.mjs digest --record artifacts/arm64/platform-arm64.json)"
+          test "$amd64_digest" != "$arm64_digest"
+          {
+            printf 'amd64=%s\n' "$amd64_digest"
+            printf 'arm64=%s\n' "$arm64_digest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create the candidate index without rebuilding
+        env:
+          AMD64_DIGEST: ${{ steps.platforms.outputs.amd64 }}
+          ARM64_DIGEST: ${{ steps.platforms.outputs.arm64 }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag "$IMAGE:candidate-$GITHUB_SHA" \
+            "$IMAGE@$AMD64_DIGEST" \
+            "$IMAGE@$ARM64_DIGEST"
+          docker buildx imagetools inspect --raw "$IMAGE:candidate-$GITHUB_SHA" > artifacts/index.json
+
+      - name: Create and validate the candidate evidence
+        run: |
+          set -euo pipefail
+          node scripts/session-candidate-evidence.mjs candidate \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-commit "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --image "$IMAGE" \
+            --index artifacts/index.json \
+            --amd64-record artifacts/amd64/platform-amd64.json \
+            --arm64-record artifacts/arm64/platform-arm64.json \
+            --output artifacts/candidate-evidence.json
+          node scripts/session-candidate-evidence.mjs validate \
+            --evidence artifacts/candidate-evidence.json \
+            --index artifacts/index.json \
+            --artifact-directory artifacts
+
+      - name: Resolve the exact promoted index identity
+        id: candidate
+        run: |
+          set -euo pipefail
+          index_digest="$(node scripts/session-candidate-evidence.mjs index-digest --evidence artifacts/candidate-evidence.json)"
+          [[ "$index_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          registry_digest="$(docker buildx imagetools inspect "$IMAGE:candidate-$GITHUB_SHA" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          test "$registry_digest" = "$index_digest"
+          {
+            printf 'digest=%s\n' "$index_digest"
+            printf 'reference=%s@%s\n' "$IMAGE" "$index_digest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Attest build provenance for the exact OCI index
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.candidate.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest Fireball candidate evidence for the exact OCI index
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.candidate.outputs.digest }}
+          predicate-type: https://fireball.dev/attestations/session-candidate/v1
+          predicate-path: artifacts/candidate-evidence.json
+          push-to-registry: true
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+
+      - name: Sign and verify the exact OCI index
+        env:
+          CANDIDATE_REFERENCE: ${{ steps.candidate.outputs.reference }}
+        run: |
+          set -euo pipefail
+          certificate_identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/session-candidate.yml@refs/heads/main"
+          cosign sign --yes "$CANDIDATE_REFERENCE"
+          cosign verify \
+            --certificate-identity "$certificate_identity" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$CANDIDATE_REFERENCE"
+
+      - name: Upload the complete candidate evidence bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: session-candidate-${{ github.sha }}
+          path: artifacts
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize the candidate
+        env:
+          CANDIDATE_DIGEST: ${{ steps.candidate.outputs.digest }}
+        run: |
+          {
+            echo '## Fireball session candidate'
+            echo
+            echo "- Source: \`$GITHUB_SHA\`"
+            echo "- OCI index: \`$IMAGE@$CANDIDATE_DIGEST\`"
+            echo "- QA tag: \`candidate-$GITHUB_SHA\`"
+            echo "- Platforms: \`linux/amd64\`, \`linux/arm64\`"
+            echo "- Exact-digest WPE, isolation, media/control, reconnect, burn, and TURN relay gates: PASS"
+            echo "- Per-platform SPDX SBOM attestations, index provenance, candidate evidence attestation, and keyless Cosign signature: published"
+          } >> "$GITHUB_STEP_SUMMARY"

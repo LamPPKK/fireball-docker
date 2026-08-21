@@ -2,7 +2,7 @@
 
 ## Status
 
-The `0.1.0-dev.1` session image is an E1 engineering candidate. Its source contract, bootstrap boundary, Docker lifecycle, two-architecture build/start/smoke gate, real two-tenant infrastructure gate, browser-state isolation, source-revision H.264/Opus/control gate, and relay-only TURN gate are implemented and tested. It is not a release until all gates are repeated against and promote the same immutable digest.
+The `0.1.0-dev.1` session image is an E1 engineering candidate. Its source contract, bootstrap boundary, Docker lifecycle, two-architecture build/start/smoke gate, real two-tenant infrastructure gate, browser-state isolation, source-revision H.264/Opus/control gate, and relay-only TURN gate are implemented and tested. The manual exact-digest candidate workflow is implemented but has not yet produced accepted release evidence. It is not a release until that workflow passes and the remaining deployment gates use the same immutable digest.
 
 Workflow run `32442811942` at commit `2cc0ad6` reproduced the previous **NO-GO** under Docker's built-in seccomp profile: the amd64 image and plugins passed, AppArmor was applied without a denial, then bubblewrap failed its first nested namespace creation. Run `32444451863` at commit `bb40440` proved the checksum-locked policy allowed that namespace setup, but Linux then rejected a fresh procfs below Docker's locked `/proc` paths. Run `32445430523` at commit `a8152cb` proved the tenant-PID/read-only-proc wrapper passed compilation, metadata, namespace creation, and the proc boundary; the next fail-closed boundary was bubblewrap's exact second-level `unshare(CLONE_NEWUSER)` for `/dev/pts`.
 
@@ -26,6 +26,32 @@ Workflow run [`32459386522`](https://github.com/LamPPKK/fireball-docker/actions/
 - Container seccomp: Moby's deny-by-default profile at the exact commit and checksum in `deploy/seccomp/fireball-session.provenance.json`, restricted to amd64/arm64 and extended only for the reviewed WPE bubblewrap setup calls.
 
 The development build still resolves Debian security packages during the build. Release promotion must record the resulting OCI digest and attached SBOM/provenance; a production orchestrator rejects mutable image references.
+
+### Exact-digest candidate lane
+
+`.github/workflows/session-candidate.yml` is manual, runs only from `main`, and does not publish `latest`. It uses native Ubuntu 24.04 amd64 and arm64 runners. Each matrix job builds the `release` target once, pushes a commit-scoped QA tag, locks the raw registry manifest by SHA-256, and aliases only that pulled digest for testing. A separate browser-state fixture layer uses `FROM <exact digest>` and is never part of the promoted image. The complete single-container, two-tenant, browser-state, Direct-media, relay-only TURN, reconnect, burn, ticket-revocation, and residue suite therefore evaluates the same platform manifest later placed in the multi-platform index.
+
+After QA, Syft produces one SPDX JSON document per platform. The workflow records the exact manifest bytes, SBOM checksum/size, source commit, and platform in a strict record; it then attaches GitHub build-provenance and SBOM attestations to that platform digest. Only after both matrix jobs succeed may the merge job run `imagetools create` over the two recorded digests. The validator requires exactly `linux/amd64` and `linux/arm64`, rejects extra descriptors and digest drift, hashes the raw OCI index, and binds that digest to repository, commit, workflow run/attempt, candidate tag, platform manifests, and SBOMs in `candidate-evidence.json`.
+
+[`schemas/session-candidate-evidence-v1.schema.json`](../schemas/session-candidate-evidence-v1.schema.json) is the structural contract. [`scripts/session-candidate-evidence.mjs`](../scripts/session-candidate-evidence.mjs) is the normative semantic validator: it also enforces canonical ordering, cross-file digests, workflow URL identity, source equality, distinct platform manifests, regular bounded files, no final symlinks, and stable metadata while reading. The merge job validates the complete downloaded bundle before attaching index provenance and the Fireball evidence predicate, then keylessly signs and verifies `image@index-digest` with the exact `session-candidate.yml@refs/heads/main` certificate identity. Every external action in this workflow is pinned to an immutable commit.
+
+The `candidate-<commit>` tag is only a discovery pointer and can be replaced by an explicit rerun. Consumers must deploy the exact index digest from the evidence. QA platform tags are intentionally retained as forensic inputs if a later merge/sign step fails; they are not releases.
+
+After a successful run, verify both GitHub attestations and the independent Cosign signature:
+
+```sh
+candidate="ghcr.io/lamppkk/fireball-session@sha256:<INDEX_DIGEST>"
+
+gh attestation verify "oci://$candidate" \
+  --repo LamPPKK/fireball-docker
+
+cosign verify "$candidate" \
+  --certificate-identity \
+    "https://github.com/LamPPKK/fireball-docker/.github/workflows/session-candidate.yml@refs/heads/main" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
+GitHub/Sigstore verification proves the workflow identity and signed digest. It does not prove Apple-style human review, production deployment health, or that a mutable tag still resolves to the same digest.
 
 ## Runtime boundary
 
@@ -93,10 +119,10 @@ Set `FIREBALL_SESSION_SECCOMP_PROFILE=/etc/fireball/fireball-session-seccomp.jso
 
 Promotion additionally requires:
 
-1. Build `linux/amd64` and `linux/arm64` once and capture their manifest digest, SBOM, and provenance.
-2. Repeat the source-revision gate against the exact digest on a real Docker Engine: WPE load, H.264/Opus offer/answer, DataChannel input, reconnect, crash, burn, credential revocation, and Docker residue cleanup.
-3. Repeat the already-passing two-tenant infrastructure and browser-state isolation gates against the immutable candidate digest.
-4. Preserve the already-passing read-only rootfs, tmpfs separation, memory/PID/CPU quotas, bootstrap/ticket boundaries, peer-network denial, and burn cleanup; add daemon restart reconciliation against that exact digest.
-5. Promote the already-tested digest. Do not rebuild after QA.
+1. Run `session-candidate` from protected `main`; both native platform jobs and the no-rebuild index merge/sign job must pass.
+2. Preserve the emitted exact index digest, platform manifests, SPDX SBOMs, candidate evidence, GitHub attestations, and Cosign identity. Never substitute a tag for that digest.
+3. Add browser/encoder crash recovery and daemon restart reconciliation against the same immutable digest; the current gate already covers WPE load, H.264/Opus, DataChannel input, reconnect, burn, credential revocation, two-tenant/browser-state isolation, TURN relay, quotas, and Docker residue cleanup.
+4. Run `nginx -t` and an external TLS/WebSocket handshake against the deployed candidate through the checked adapter.
+5. Promote only that tested digest. Do not rebuild after QA.
 
 The public orchestrator should remain on host loopback behind the rendered Nginx TLS/WebSocket adapter. The adapter source is checked in normal CI, but release evidence must also include `nginx -t` and an external WebSocket handshake against the deployed version.

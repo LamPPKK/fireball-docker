@@ -9,7 +9,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "npm run contracts:check && npm run deployment:check && npm run seccomp:check && npm run session:image:check && npm run session:check && npm run build && npm test",
+    "check": "npm run contracts:check && npm run deployment:check && npm run candidate:evidence:check && npm run seccomp:check && npm run session:image:check && npm run session:check && npm run build && npm test",
+    "candidate:evidence:check": "node --check scripts/session-candidate-evidence.mjs && node --test test/session-candidate-evidence.test.mjs",
     "contracts:generate": "node scripts/sync-xanhtab-contract.mjs",
     "contracts:check": "node scripts/check-xanhtab-contract.mjs",
     "dev": "node --enable-source-maps dist/src/main.js",

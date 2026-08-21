@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fireball.dev/schemas/session-candidate-evidence-v1.schema.json",
+  "title": "Fireball session OCI candidate evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "release_status", "repository", "source_commit", "created_at", "workflow", "image"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "release_status": { "const": "candidate" },
+    "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "source_commit": { "$ref": "#/$defs/commit" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "run_id", "run_attempt", "url"],
+      "properties": {
+        "name": { "const": "session-candidate" },
+        "run_id": { "type": "integer", "minimum": 1 },
+        "run_attempt": { "type": "integer", "minimum": 1 },
+        "url": { "type": "string", "format": "uri", "maxLength": 512 }
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "candidate_tag", "index_digest", "index", "platforms"],
+      "properties": {
+        "name": { "$ref": "#/$defs/image" },
+        "candidate_tag": { "type": "string", "pattern": "^candidate-[0-9a-f]{40}$" },
+        "index_digest": { "$ref": "#/$defs/digest" },
+        "index": { "$ref": "#/$defs/fileIdentity" },
+        "platforms": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/platformRecord" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "image": { "type": "string", "pattern": "^ghcr\\.io/[a-z0-9_.-]+/[a-z0-9_.\\/-]+$" },
+    "fileIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "sha256", "size"],
+      "properties": {
+        "file": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]{0,127}$" },
+        "sha256": { "$ref": "#/$defs/digest" },
+        "size": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "platformRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "image", "source_commit", "platform", "digest", "manifest", "sbom"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "image": { "$ref": "#/$defs/image" },
+        "source_commit": { "$ref": "#/$defs/commit" },
+        "platform": { "enum": ["linux/amd64", "linux/arm64"] },
+        "digest": { "$ref": "#/$defs/digest" },
+        "manifest": { "$ref": "#/$defs/fileIdentity" },
+        "sbom": { "$ref": "#/$defs/fileIdentity" }
+      }
+    }
+  }
+}

@@ -19,6 +19,16 @@ const mediaFixture = await readFile(
   "utf8",
 );
 const imageWorkflow = await readFile(new URL("../.github/workflows/session-image.yml", import.meta.url), "utf8");
+const candidateWorkflow = await readFile(new URL("../.github/workflows/session-candidate.yml", import.meta.url), "utf8");
+const candidateEvidence = await readFile(new URL("./session-candidate-evidence.mjs", import.meta.url), "utf8");
+const candidateEvidenceSchema = JSON.parse(await readFile(
+  new URL("../schemas/session-candidate-evidence-v1.schema.json", import.meta.url),
+  "utf8",
+));
+const candidateBrowserStateDockerfile = await readFile(
+  new URL("./fixtures/browser-state-candidate.Dockerfile", import.meta.url),
+  "utf8",
+);
 const openh264Manifest = JSON.parse(await readFile(
   new URL("../config/firefox-openh264-v1.json", import.meta.url),
   "utf8",
@@ -233,6 +243,60 @@ for (const required of [
   "session:browser-state:smoke",
 ]) {
   assert.ok(imageWorkflow.includes(required), `session-image workflow is missing: ${required}`);
+}
+for (const required of [
+  "Build and push the platform image exactly once",
+  "target: release",
+  "push: true",
+  "provenance: false",
+  "sbom: false",
+  "qa-${{ github.sha }}-${{ matrix.suffix }}",
+  "docker buildx imagetools inspect --raw \"$candidate_reference\"",
+  "actual_digest=\"sha256:$(sha256sum",
+  "Smoke the exact running session image",
+  "Prove exact-digest two-tenant isolation",
+  "Prove exact-digest browser-state isolation and burn cleanup",
+  "Prove exact-digest H.264, Opus, control, reconnect, and burn",
+  "Prove exact-digest relay-only TURN twice",
+  "session-candidate-evidence.mjs platform",
+  "session-candidate-evidence.mjs candidate",
+  "session-candidate-evidence.mjs validate",
+  "candidate-platform-amd64",
+  "candidate-platform-arm64",
+  "docker buildx imagetools create",
+  "actions/attest@",
+  "sbom-path:",
+  "predicate-type: https://fireball.dev/attestations/session-candidate/v1",
+  "cosign sign --yes",
+  "cosign verify",
+]) {
+  assert.ok(candidateWorkflow.includes(required), `session-candidate workflow is missing: ${required}`);
+}
+assert.equal((candidateWorkflow.match(/docker\/build-push-action@/gu) ?? []).length, 1);
+assert.doesNotMatch(candidateWorkflow, /setup-qemu-action|:latest\b|find\s+.*(?:artifact|manifest)/);
+for (const line of candidateWorkflow.split("\n").filter((candidate) => /^\s+uses:\s+[^.]/u.test(candidate))) {
+  assert.match(line, /@[0-9a-f]{40}(?:\s+#.*)?$/u, `candidate action is not pinned by commit: ${line}`);
+}
+for (const required of [
+  "ARG BASE_IMAGE",
+  "FROM ${BASE_IMAGE}",
+  "COPY --chown=10001:10001 scripts/fixtures/browser-state-server.mjs",
+  "FIREBALL_START_URL=http://127.0.0.1:18080/",
+]) {
+  assert.ok(candidateBrowserStateDockerfile.includes(required), `candidate browser-state layer is missing: ${required}`);
+}
+assert.equal(candidateEvidenceSchema.$schema, "https://json-schema.org/draft/2020-12/schema");
+assert.equal(candidateEvidenceSchema.additionalProperties, false);
+assert.equal(candidateEvidenceSchema.properties.release_status.const, "candidate");
+for (const required of [
+  "O_NOFOLLOW",
+  "changed while it was read",
+  "OCI index must contain exactly two platform manifests",
+  "candidate tag must be source-bound",
+  "workflow URL is not bound to the repository and run identity",
+  "platform digests must differ",
+]) {
+  assert.ok(candidateEvidence.includes(required), `candidate evidence validator is missing: ${required}`);
 }
 for (const required of [
   "__FIREBALL_ICE_CONFIGURATION__",
