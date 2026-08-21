@@ -103,6 +103,18 @@ test("Docker runtime bind-mounts TURN credentials read-only without exposing the
   }]);
 });
 
+test("Docker runtime enables only the fixed ICE diagnostic flag when requested", async () => {
+  const transport = new RecordingTransport([{}, { Id: "container-1" }, {}, signalingInspect("49152")]);
+  const runtime = makeRuntime(transport, { iceDiagnostics: true });
+
+  await runtime.create(request);
+
+  const createContainer = transport.calls[1];
+  assert.ok(createContainer);
+  const body = createContainer.body as { Env: string[] };
+  assert.equal(body.Env.includes("FIREBALL_GST_ICE_DIAGNOSTICS=1"), true);
+});
+
 test("Docker runtime rejects relative TURN secret paths", () => {
   const transport = new RecordingTransport([]);
   for (const iceServersFile of [
@@ -339,6 +351,7 @@ function makeRuntime(
   transport: DockerEngineTransport,
   overrides: {
     readonly iceServersFile?: string;
+    readonly iceDiagnostics?: boolean;
     readonly requestTimeoutMs?: number;
     readonly seccompProfile?: string;
   } = {},

@@ -87,6 +87,7 @@ const runtime = new DockerEngineRuntime({
   appArmorProfile,
   seccompProfile,
   iceServersFile,
+  iceDiagnostics: expectRelay,
   requestTimeoutMs: 60_000,
   startupHealthAttempts: 120,
   startupHealthIntervalMs: 1_000,
@@ -695,6 +696,9 @@ function reportManagedContainerLogs(managedInstance) {
 }
 
 function redactContainerLogs(logs) {
+  const credentialSecrets = expectRelay
+    ? [browserIceConfiguration.iceServers[0].username, browserIceConfiguration.iceServers[0].credential]
+    : [];
   const redacted = logs.split("\n").map((line) => {
     if (
       line.includes("Received message")
@@ -702,9 +706,13 @@ function redactContainerLogs(logs) {
     ) {
       return "[redacted rswebrtc signaling frame]";
     }
-    return line
+    let safeLine = line;
+    for (const secret of credentialSecrets) safeLine = safeLine.replaceAll(secret, "[redacted]");
+    return safeLine
       .replace(/a=ice-ufrag:[^\\\s"]+/giu, "a=ice-ufrag:[redacted]")
       .replace(/a=ice-pwd:[^\\\s"]+/giu, "a=ice-pwd:[redacted]")
+      .replace(/\bufrag:[^\s,;]+/giu, "ufrag:[redacted]")
+      .replace(/\bpwd:[^\s,;]+/giu, "pwd:[redacted]")
       .replace(/a=fingerprint:[^\\\r\n"]+/giu, "a=fingerprint:[redacted]")
       .replace(/candidate:[^\\\r\n"]+/giu, "candidate:[redacted]")
       .replace(/\b(turns?):\/\/[^@\s"]+@/giu, "$1://[redacted]@");

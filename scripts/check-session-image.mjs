@@ -108,6 +108,7 @@ assert.match(supervisor, /run-web-server=false/);
 assert.match(supervisor, /stun-server=/);
 assert.match(supervisor, /turn-servers=/);
 assert.match(supervisor, /ice-transport-policy=/);
+assert.match(supervisor, /webrtcnice:7,webrtcbin:6,webrtcsink:5/);
 assert.match(supervisor, /video\/x-raw,format=BGRA/);
 assert.match(supervisor, /audiotestsrc/);
 assert.match(supervisor, /audiomixer/);
@@ -218,6 +219,8 @@ for (const required of [
   "TURN STUN binding response was invalid",
   "FIREBALL_SMOKE_TURN_PROBE_HOST",
   "FIREBALL_SMOKE_TURN_PROBE_PORT",
+  "iceDiagnostics: expectRelay",
+  "credentialSecrets",
 ]) {
   assert.ok(mediaGate.includes(required), `real media gate is missing TURN preflight: ${required}`);
 }
