@@ -2,16 +2,18 @@
 
 ## Status
 
-The `0.1.0-dev.1` session image is an E1 engineering candidate. Its source contract, bootstrap boundary, Docker lifecycle, and two-architecture build/start/smoke gate are implemented and tested. It is not a release until end-to-end media/control tests, tenant isolation, and promotion all pass against the same immutable digest.
+The `0.1.0-dev.1` session image is an E1 engineering candidate. Its source contract, bootstrap boundary, Docker lifecycle, two-architecture build/start/smoke gate, and real two-tenant infrastructure gate are implemented and tested. It is not a release until browser-state isolation, end-to-end media/control, real TURN, and promotion all pass against the same immutable digest.
 
 Workflow run `32442811942` at commit `2cc0ad6` reproduced the previous **NO-GO** under Docker's built-in seccomp profile: the amd64 image and plugins passed, AppArmor was applied without a denial, then bubblewrap failed its first nested namespace creation. Run `32444451863` at commit `bb40440` proved the checksum-locked policy allowed that namespace setup, but Linux then rejected a fresh procfs below Docker's locked `/proc` paths. Run `32445430523` at commit `a8152cb` proved the tenant-PID/read-only-proc wrapper passed compilation, metadata, namespace creation, and the proc boundary; the next fail-closed boundary was bubblewrap's exact second-level `unshare(CLONE_NEWUSER)` for `/dev/pts`.
 
 Workflow run [`32448127234`](https://github.com/LamPPKK/fireball-docker/actions/runs/32448127234) at commit `6daa3aecde3362fcebfe49da1e5a0e8185fe1b81` is the first **PASS** for the two-architecture build/start/smoke gate. Native Ubuntu 24.04 runners built and loaded the same source revision for `linux/amd64` and `linux/arm64`; both jobs passed plugin and runtime metadata inspection, AppArmor loading, unsafe TURN-secret rejection, Docker health, bootstrap authentication, single-controller enforcement, reconnect, and cleanup. The jobs completed in 55 seconds and 10 minutes 1 second respectively. This result does not yet promote an OCI digest or satisfy real media, TURN, or two-tenant isolation evidence.
 
+Workflow run [`32449711590`](https://github.com/LamPPKK/fireball-docker/actions/runs/32449711590) at commit `e713d2b5d72e559aea2251544f055374d4187c39` is the first **PASS** for the real Docker two-tenant infrastructure gate on both architectures. The native amd64 and arm64 jobs completed in 2 minutes 44 seconds and 2 minutes 45 seconds. Each job ran two WPE sessions concurrently through the actual orchestrator, denied cross-tenant read/ticket/burn operations, mapped two public tokens to their exact sessions, rejected each peer's internal bootstrap secret, and revoked outstanding tickets at burn. Docker inspection and in-container probes proved distinct container, PID, network, mount, and tmpfs boundaries; tenant process markers were not visible to the peer; each private bridge rejected direct access to the peer; read-only rootfs, dropped capabilities, AppArmor, seccomp, memory/CPU/PID quota, and cleanup assertions passed. This source-revision gate does not inspect WebKit cookie/local-storage/service-worker semantics, negotiate media through a real TURN service, or promote an immutable OCI digest.
+
 ## Provenance
 
 - Base: Debian Trixie slim OCI index pinned by digest in `session/image-manifest.json`.
-- WPE: `gstreamer1.0-wpe` and `libwpewebkit-2.0-1` from Trixie repositories at image-build time; exact installed versions are written to `/usr/share/fireball-session/component-versions.txt`.
+- WPE: `gstreamer1.0-wpe`, `libwpewebkit-2.0-1`, `libegl1`, and `libgles2` from Trixie repositories at image-build time; exact installed versions are written to `/usr/share/fireball-session/component-versions.txt`, and the build verifies that `libGLESv2.so.2` is loadable.
 - rswebrtc: upstream `gst-plugins-rs` tag `gstreamer-1.26.2`, pinned to commit `0826007d970a473475b6bf993229ebcde173fdba` and built with `cargo cinstall --locked`.
 - Runtime proxy: Node.js from Trixie plus `ws@8.21.3`, locked with an npm integrity hash.
 - Container seccomp: Moby's deny-by-default profile at the exact commit and checksum in `deploy/seccomp/fireball-session.provenance.json`, restricted to amd64/arm64 and extended only for the reviewed WPE bubblewrap setup calls.
@@ -43,7 +45,7 @@ An operator may configure TURN through the [deployment adapter](deployment-adapt
 - Every production session also receives `deploy/seccomp/fireball-session.json`. It preserves Moby's `SCMP_ACT_ERRNO` default, permits only three exact `clone()` namespace flag sets, the exact `unshare(CLONE_NEWUSER)` needed for bubblewrap's second-level `/dev/pts` setup, and `mount`, `pivot_root`, and `umount2` for its mount phase. It does not allow `clone3`, `setns`, any other `unshare` flag set, add capabilities, or disable seccomp. WebKit installs its own inner filter after setup and blocks namespace/mount operations in the web process.
 - Docker's default masked/read-only system paths and private per-tenant PID namespace remain intact. A compiled fail-closed wrapper accepts only WebKit's sealed `--args` launch form, verifies its seccomp/UTS/PID/proc invariants, removes the incompatible second PID namespace, and replaces the fresh procfs request with a read-only bind of the container's already masked `/proc`. It rejects external PID namespaces, nested argument files, capability overrides, or any missing/duplicate invariant. WebKit still creates its inner user, mount, UTS, optional network/IPC namespaces and installs its renderer seccomp filter.
 - Cookie, cache, configuration, GStreamer registry, and runtime state are rooted below `/run/fireball-session`.
-- The portable Docker profile negotiates WPE's system-memory BGRA output before color conversion, avoiding a mandatory EGL/GPU dependency. Hardware/zero-copy profiles remain benchmark-gated deployment variants.
+- The portable Docker profile negotiates WPE's system-memory BGRA output before color conversion, avoiding a mandatory GPU-backed/zero-copy buffer path. WPE still receives its required EGL/GLES runtime libraries. Hardware/zero-copy profiles remain benchmark-gated deployment variants.
 - Docker mounts that path as a `256 MiB` tmpfs owned by UID/GID `10001`, with `noexec`, `nosuid`, and `nodev`.
 - Burn closes active/pending relays before force-removing the container and its private network.
 
@@ -69,7 +71,7 @@ npm ci --prefix session --ignore-scripts
 npm run check
 ```
 
-The `session-image` GitHub workflow builds and loads each architecture independently under Buildx on GitHub's native Ubuntu 24.04 x86_64 and arm64 runners, then checks `wpesrc`, `webrtcsink`, `openh264enc`, the non-root user, supervisor syntax, and embedded component versions. It rejects an ICE fixture with unsafe permissions, then starts the image with a valid read-only TURN fixture plus the production read-only/capability/tmpfs restrictions. The smoke waits for Docker health, proving the pinned GStreamer build parses the TURN properties, verifies loopback-only signaling, rejects a bad bootstrap secret and a second controller, and proves the controller lease can reconnect before removing the container. It does not prove a real TURN allocation because the fixture deliberately uses the reserved `.invalid` domain.
+The `session-image` GitHub workflow builds and loads each architecture independently under Buildx on GitHub's native Ubuntu 24.04 x86_64 and arm64 runners, then checks `wpesrc`, `webrtcsink`, `openh264enc`, GLES runtime resolution, the non-root user, supervisor syntax, and embedded component versions. It rejects an ICE fixture with unsafe permissions, then starts the image with a valid read-only TURN fixture plus the production read-only/capability/tmpfs restrictions. The single-container smoke waits for Docker health, proving the pinned GStreamer build parses the TURN properties, verifies loopback-only signaling, rejects a bad bootstrap secret and a second controller, and proves the controller lease can reconnect before removing the container. The two-tenant smoke then uses the compiled orchestrator and real Docker Engine to verify ownership denial, credential/session binding, container and namespace separation, process/tmpfs/network probes, confinement, quotas, revocation, and cleanup. It does not prove browser cookie/storage semantics or a real TURN allocation because the fixture deliberately uses the reserved `.invalid` domain.
 
 Install the reviewed host policy without changing its bytes:
 
@@ -86,8 +88,8 @@ Promotion additionally requires:
 
 1. Build `linux/amd64` and `linux/arm64` once and capture their manifest digest, SBOM, and provenance.
 2. Run the exact digest on a real Docker Engine and complete WPE load, H.264/Opus offer/answer, input, reconnect, crash, and burn tests.
-3. Run two tenants concurrently and prove cookie, storage, process, network namespace, bootstrap secret, and signaling ticket isolation.
-4. Test read-only rootfs, tmpfs ownership, memory/PID/CPU quotas, unhealthy startup rollback, daemon restart reconciliation, and no reusable residue after burn.
+3. Repeat the two-tenant infrastructure gate against the immutable candidate digest and add browser-level cookie, local-storage, service-worker, and restore isolation tests.
+4. Preserve the already-passing read-only rootfs, tmpfs separation, memory/PID/CPU quotas, bootstrap/ticket boundaries, peer-network denial, and burn cleanup; add daemon restart reconciliation against that exact digest.
 5. Promote the already-tested digest. Do not rebuild after QA.
 
 The public orchestrator should remain on host loopback behind the rendered Nginx TLS/WebSocket adapter. The adapter source is checked in normal CI, but release evidence must also include `nginx -t` and an external WebSocket handshake against the deployed version.
