@@ -118,6 +118,16 @@ test("Docker runtime rejects relative TURN secret paths", () => {
   }
 });
 
+test("Docker runtime rejects an invalid Engine request timeout", () => {
+  const transport = new RecordingTransport([]);
+  for (const requestTimeoutMs of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(
+      () => makeRuntime(transport, { requestTimeoutMs }),
+      /Docker Engine request timeout must be a positive integer/,
+    );
+  }
+});
+
 test("Docker runtime rejects permissive or malformed seccomp policy", () => {
   const transport = new RecordingTransport([]);
   for (const candidate of [
@@ -327,7 +337,11 @@ test("startup reconciliation fails closed on an invalid Docker list response", a
 
 function makeRuntime(
   transport: DockerEngineTransport,
-  overrides: { readonly iceServersFile?: string; readonly seccompProfile?: string } = {},
+  overrides: {
+    readonly iceServersFile?: string;
+    readonly requestTimeoutMs?: number;
+    readonly seccompProfile?: string;
+  } = {},
 ): DockerEngineRuntime {
   return new DockerEngineRuntime(
     {

@@ -67,7 +67,9 @@ RUN apt-get update \
       gstreamer1.0-plugins-good \
       gstreamer1.0-tools \
       gstreamer1.0-wpe \
+      libegl1 \
       libgl1-mesa-dri \
+      libgles2 \
       libopenh264-8 \
       libwpewebkit-2.0-1 \
       nodejs \
@@ -100,8 +102,9 @@ ENV HOME=/run/fireball-session/home \
 RUN GST_PLUGIN_PATH_1_0=/usr/lib/fireball/gstreamer-1.0 gst-inspect-1.0 wpesrc >/dev/null \
     && GST_PLUGIN_PATH_1_0=/usr/lib/fireball/gstreamer-1.0 gst-inspect-1.0 webrtcsink >/dev/null \
     && GST_PLUGIN_PATH_1_0=/usr/lib/fireball/gstreamer-1.0 gst-inspect-1.0 openh264enc >/dev/null \
+    && ldconfig -p | grep -F 'libGLESv2.so.2' >/dev/null \
     && { \
-      dpkg-query -W -f='${Package}=${Version}\n' gstreamer1.0-wpe libwpewebkit-2.0-1 gstreamer1.0-tools nodejs; \
+      dpkg-query -W -f='${Package}=${Version}\n' gstreamer1.0-wpe libwpewebkit-2.0-1 gstreamer1.0-tools libegl1 libgles2 nodejs; \
       printf 'gst-plugins-rs=%s\n' "${GST_PLUGINS_RS_REV}"; \
     } > /usr/share/fireball-session/component-versions.txt
 

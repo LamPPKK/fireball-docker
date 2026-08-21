@@ -44,6 +44,7 @@ jobs:
           docker run --rm --platform "${{ matrix.platform }}" --entrypoint /usr/bin/node "fireball/session-wpe:test-${{ matrix.suffix }}" --check /opt/fireball-session/supervisor.mjs
           docker run --rm --platform "${{ matrix.platform }}" --entrypoint /usr/bin/bwrap "fireball/session-wpe:test-${{ matrix.suffix }}" --version
           docker run --rm --platform "${{ matrix.platform }}" --entrypoint test "fireball/session-wpe:test-${{ matrix.suffix }}" -x /usr/lib/fireball/bwrap.real
+          docker run --rm --platform "${{ matrix.platform }}" --entrypoint /bin/sh "fireball/session-wpe:test-${{ matrix.suffix }}" -eu -c "ldconfig -p | grep -F libGLESv2.so.2"
           docker run --rm --platform "${{ matrix.platform }}" --entrypoint cat "fireball/session-wpe:test-${{ matrix.suffix }}" /usr/share/fireball-session/component-versions.txt
       - uses: actions/setup-node@v6
         with:

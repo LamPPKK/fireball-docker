@@ -30,6 +30,7 @@ const runtime = new DockerEngineRuntime({
   ...optionalAppArmorProfile(),
   ...await sessionSeccompProfile(environment),
   ...optionalIceServersFile(),
+  requestTimeoutMs: positiveEnvironment("FIREBALL_DOCKER_REQUEST_TIMEOUT_MS", 30_000),
   startupHealthAttempts: positiveEnvironment("FIREBALL_SESSION_HEALTH_ATTEMPTS", 60),
   startupHealthIntervalMs: positiveEnvironment("FIREBALL_SESSION_HEALTH_INTERVAL_MS", 1_000),
 });

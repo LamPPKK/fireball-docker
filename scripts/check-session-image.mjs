@@ -61,6 +61,8 @@ for (const required of [
   "--no-default-features",
   "--features web_server",
   "gstreamer1.0-wpe",
+  "libegl1",
+  "libgles2",
   "libwpewebkit-2.0-1",
   "libgstrswebrtc.so",
   "bwrap-wrapper-builder",
@@ -107,6 +109,7 @@ assert.match(imageWorkflow, /npm run container:smoke --prefix session/);
 assert.match(imageWorkflow, /npm run session:isolation:smoke/);
 assert.match(imageWorkflow, /npm ci --ignore-scripts/);
 assert.match(imageWorkflow, /npm run build/);
+assert.match(imageWorkflow, /ldconfig -p \| grep -F libGLESv2\.so\.2/);
 assert.match(imageWorkflow, /actions\/setup-node@v6/);
 assert.match(imageWorkflow, /runner: ubuntu-24\.04\n/);
 assert.match(imageWorkflow, /runner: ubuntu-24\.04-arm\n/);

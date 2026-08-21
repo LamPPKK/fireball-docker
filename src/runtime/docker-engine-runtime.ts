@@ -22,6 +22,7 @@ export interface DockerEngineOptions {
   readonly appArmorProfile?: string;
   readonly seccompProfile?: string;
   readonly iceServersFile?: string;
+  readonly requestTimeoutMs?: number;
   readonly startupHealthAttempts?: number;
   readonly startupHealthIntervalMs?: number;
 }
@@ -62,7 +63,11 @@ export class DockerEngineRuntime implements RuntimeAdapter {
       options.startupHealthIntervalMs ?? 1_000,
       "startup health interval",
     );
-    this.transport = transport ?? new UnixSocketDockerEngineTransport(options.socketPath);
+    const requestTimeoutMs = positiveInteger(
+      options.requestTimeoutMs ?? 30_000,
+      "Docker Engine request timeout",
+    );
+    this.transport = transport ?? new UnixSocketDockerEngineTransport(options.socketPath, requestTimeoutMs);
   }
 
   public async create(input: CreateRuntimeRequest): Promise<RuntimeResource> {
