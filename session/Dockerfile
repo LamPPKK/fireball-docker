@@ -62,6 +62,7 @@ RUN apt-get update \
       ca-certificates \
       fonts-dejavu-core \
       gstreamer1.0-gl \
+      gstreamer1.0-nice \
       gstreamer1.0-plugins-bad \
       gstreamer1.0-plugins-base \
       gstreamer1.0-plugins-good \
@@ -104,9 +105,10 @@ RUN GST_PLUGIN_PATH_1_0=/usr/lib/fireball/gstreamer-1.0 gst-inspect-1.0 wpesrc >
     && GST_PLUGIN_PATH_1_0=/usr/lib/fireball/gstreamer-1.0 gst-inspect-1.0 openh264enc >/dev/null \
     && GST_PLUGIN_PATH_1_0=/usr/lib/fireball/gstreamer-1.0 gst-inspect-1.0 audiotestsrc >/dev/null \
     && GST_PLUGIN_PATH_1_0=/usr/lib/fireball/gstreamer-1.0 gst-inspect-1.0 audiomixer >/dev/null \
+    && GST_PLUGIN_PATH_1_0=/usr/lib/fireball/gstreamer-1.0 gst-inspect-1.0 nicesrc >/dev/null \
     && ldconfig -p | grep -F 'libGLESv2.so.2' >/dev/null \
     && { \
-      dpkg-query -W -f='${Package}=${Version}\n' gstreamer1.0-wpe libwpewebkit-2.0-1 gstreamer1.0-tools libegl1 libgles2 nodejs; \
+      dpkg-query -W -f='${Package}=${Version}\n' gstreamer1.0-wpe gstreamer1.0-nice libwpewebkit-2.0-1 gstreamer1.0-tools libegl1 libgles2 nodejs; \
       printf 'gst-plugins-rs=%s\n' "${GST_PLUGINS_RS_REV}"; \
     } > /usr/share/fireball-session/component-versions.txt
 

@@ -476,6 +476,7 @@ function preflight() {
     "opusenc",
     "audiotestsrc",
     "audiomixer",
+    "nicesrc",
   ]) {
     const result = spawnSync("gst-inspect-1.0", [element], { stdio: "ignore", timeout: 5_000 });
     if (result.status !== 0) throw new Error(`required GStreamer element is unavailable: ${element}`);

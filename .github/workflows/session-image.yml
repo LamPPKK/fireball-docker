@@ -38,6 +38,7 @@ jobs:
           docker run --rm --platform "${{ matrix.platform }}" --entrypoint gst-inspect-1.0 "fireball/session-wpe:test-${{ matrix.suffix }}" wpesrc
           docker run --rm --platform "${{ matrix.platform }}" --entrypoint gst-inspect-1.0 "fireball/session-wpe:test-${{ matrix.suffix }}" webrtcsink
           docker run --rm --platform "${{ matrix.platform }}" --entrypoint gst-inspect-1.0 "fireball/session-wpe:test-${{ matrix.suffix }}" openh264enc
+          docker run --rm --platform "${{ matrix.platform }}" --entrypoint gst-inspect-1.0 "fireball/session-wpe:test-${{ matrix.suffix }}" nicesrc
       - name: Inspect runtime metadata
         run: |
           test "$(docker image inspect --format '{{.Config.User}}' "fireball/session-wpe:test-${{ matrix.suffix }}")" = "10001:10001"
