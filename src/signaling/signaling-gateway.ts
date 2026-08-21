@@ -92,19 +92,21 @@ export class SignalingGateway {
       try {
         const connected = await this.connector.connect(authorization.runtime, abortController.signal);
         if (abortController.signal.aborted) {
-          connected.terminate();
+          connected.socket.terminate();
           return;
         }
-        upstream = connected;
-        upstream.on("message", (data, isBinary) => forward(client, data, isBinary));
-        upstream.once("close", () => shutdown(1011, "upstream closed"));
-        upstream.once("error", () => shutdown(1011, "upstream failed"));
+        upstream = connected.socket;
         phase = "relaying";
         forward(
           client,
           Buffer.from(JSON.stringify({ type: "ready", sessionId: authorization.sessionId })),
           false,
         );
+        connected.activate({
+          onMessage: (data, isBinary) => forward(client, data, isBinary),
+          onClose: () => shutdown(1011, "upstream closed"),
+          onError: () => shutdown(1011, "upstream failed"),
+        });
       } catch {
         shutdown(1011, "upstream unavailable");
       }

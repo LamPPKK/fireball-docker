@@ -59,6 +59,39 @@ test("signaling relay authenticates both hops, relays frames, and burn closes th
   assert.equal(runtime.destroyed, true);
 });
 
+test("signaling relay preserves an upstream frame sent during authenticated handoff", async (context) => {
+  const welcome = { type: "welcome", peerId: "producer-fixture" };
+  const upstream = await startUpstream(context, { eagerFrames: [welcome] });
+  const runtime = new FixedRuntime(upstream.endpoint);
+  const sessions = new SessionService(runtime);
+  const app = buildApp({
+    authenticator: new DevelopmentAuthenticator("test"),
+    sessions,
+    signaling: new SignalingGateway(
+      sessions,
+      new WebSocketSignalingConnector(),
+      new SignalingConnectionRegistry(),
+    ),
+    signalingAllowedOrigins: new Set([origin]),
+  });
+  await app.ready();
+  const created = await sessions.create({ tenantId: "alpha", subject: "alice" });
+  const exchanged = sessions.exchangeSignalingTicket(created.signalingTicket);
+  const client = await app.injectWS("/orchestrator/v1/signaling", { headers: { origin } });
+  context.after(async () => {
+    client.terminate();
+    for (const socket of app.websocketServer.clients) socket.terminate();
+    await app.close();
+  });
+
+  const messages = nextMessages(client, 2);
+  client.send(JSON.stringify({ type: "authenticate", token: exchanged.signalingToken }));
+  assert.deepEqual((await messages).map(({ text }) => JSON.parse(text)), [
+    { type: "ready", sessionId: created.session.id },
+    welcome,
+  ]);
+});
+
 test("signaling upgrade rejects an origin outside the exact allowlist", async (context) => {
   const runtime = new FixedRuntime("ws://127.0.0.1:1/internal/v1/signaling");
   const sessions = new SessionService(runtime);
@@ -145,7 +178,10 @@ interface UpstreamFixture {
   readonly authentication: Promise<string>;
 }
 
-async function startUpstream(context: { after: (hook: () => void | Promise<void>) => void }): Promise<UpstreamFixture> {
+async function startUpstream(
+  context: { after: (hook: () => void | Promise<void>) => void },
+  options: { readonly eagerFrames?: readonly unknown[] } = {},
+): Promise<UpstreamFixture> {
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0, maxPayload: 64 * 1024 });
   context.after(() => new Promise<void>((resolve) => {
     for (const client of server.clients) client.terminate();
@@ -174,6 +210,7 @@ async function startUpstream(context: { after: (hook: () => void | Promise<void>
         authenticated = true;
         resolveAuthentication(frame.secret);
         socket.send(JSON.stringify({ type: "authenticated" }));
+        for (const eagerFrame of options.eagerFrames ?? []) socket.send(JSON.stringify(eagerFrame));
         return;
       }
       socket.send(data, { binary: isBinary, compress: false });
@@ -217,6 +254,24 @@ function nextMessage(socket: WebSocket): Promise<{ text: string; isBinary: boole
       clearTimeout(timer);
       resolve({ text: rawDataToBuffer(data).toString("utf8"), isBinary });
     });
+  });
+}
+
+function nextMessages(socket: WebSocket, count: number): Promise<Array<{ text: string; isBinary: boolean }>> {
+  return new Promise((resolve, reject) => {
+    const messages: Array<{ text: string; isBinary: boolean }> = [];
+    const timer = setTimeout(() => {
+      socket.off("message", onMessage);
+      reject(new Error("timed out waiting for WebSocket messages"));
+    }, 2_000);
+    const onMessage = (data: RawData, isBinary: boolean): void => {
+      messages.push({ text: rawDataToBuffer(data).toString("utf8"), isBinary });
+      if (messages.length !== count) return;
+      clearTimeout(timer);
+      socket.off("message", onMessage);
+      resolve(messages);
+    };
+    socket.on("message", onMessage);
   });
 }
 
