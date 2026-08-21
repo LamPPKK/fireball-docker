@@ -252,6 +252,11 @@ function requestTls(certificate, path, { method, headers = {}, body = "" }) {
       lookup: loopbackLookup,
       timeout: 10_000,
     }, (response) => {
+      const tls = {
+        authorized: response.socket.authorized,
+        authorizationError: response.socket.authorizationError,
+        protocol: response.socket.getProtocol(),
+      };
       const chunks = [];
       let bytes = 0;
       response.on("data", (chunk) => {
@@ -263,11 +268,7 @@ function requestTls(certificate, path, { method, headers = {}, body = "" }) {
         statusCode: response.statusCode,
         headers: response.headers,
         body: Buffer.concat(chunks).toString("utf8"),
-        tls: {
-          authorized: response.socket.authorized,
-          authorizationError: response.socket.authorizationError,
-          protocol: response.socket.getProtocol(),
-        },
+        tls,
       }));
     });
     request.once("timeout", () => request.destroy(new Error("TLS request timed out")));
