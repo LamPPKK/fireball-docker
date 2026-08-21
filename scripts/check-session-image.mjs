@@ -9,6 +9,7 @@ const packageLock = JSON.parse(await readFile(new URL("../session/package-lock.j
 const supervisor = await readFile(new URL("../session/supervisor.mjs", import.meta.url), "utf8");
 const bwrapWrapper = await readFile(new URL("../session/fireball-bwrap-wrapper.c", import.meta.url), "utf8");
 const containerSmoke = await readFile(new URL("../session/container-smoke.mjs", import.meta.url), "utf8");
+const isolationGate = await readFile(new URL("./real-isolation-gate.mjs", import.meta.url), "utf8");
 const imageWorkflow = await readFile(new URL("../.github/workflows/session-image.yml", import.meta.url), "utf8");
 const appArmorProfile = await readFile(new URL("../deploy/apparmor/fireball-session", import.meta.url), "utf8");
 const seccompLoader = await readFile(new URL("../src/runtime/seccomp-profile.ts", import.meta.url), "utf8");
@@ -103,6 +104,9 @@ for (const required of [
   assert.ok(containerSmoke.includes(required), `container smoke is missing: ${required}`);
 }
 assert.match(imageWorkflow, /npm run container:smoke --prefix session/);
+assert.match(imageWorkflow, /npm run session:isolation:smoke/);
+assert.match(imageWorkflow, /npm ci --ignore-scripts/);
+assert.match(imageWorkflow, /npm run build/);
 assert.match(imageWorkflow, /actions\/setup-node@v6/);
 assert.match(imageWorkflow, /runner: ubuntu-24\.04\n/);
 assert.match(imageWorkflow, /runner: ubuntu-24\.04-arm\n/);
@@ -134,5 +138,19 @@ assert.equal(iceFixture.schema_version, 1);
 assert.equal(iceFixture.ice_transport_policy, "relay");
 assert.match(imageWorkflow, /Reject unsafe TURN secret permissions/);
 assert.match(imageWorkflow, /must be owned by root:10001 with mode 0440/);
+for (const required of [
+  "maximumSessions: 2",
+  "expectTenantDenied",
+  "namespaceIdentity",
+  "assertOwnNetworkMarker",
+  "assertNetworkPeerIsUnreachable",
+  "expectInternalAuthenticationRejected",
+  "expectTicketRevoked",
+  "managedContainers(instanceId).length, 0",
+  "managedNetworks(instanceId).length, 0",
+]) {
+  assert.ok(isolationGate.includes(required), `real isolation gate is missing: ${required}`);
+}
+assert.doesNotMatch(isolationGate, /--privileged|seccomp=unconfined|systempaths=unconfined/);
 
 process.stdout.write("session image contract is internally consistent\n");
