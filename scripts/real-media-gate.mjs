@@ -98,7 +98,7 @@ const sessions = new SessionService(runtime, {
     maximumSessions: 1,
     memoryMiB: 512,
     cpuShares: 512,
-    pids: 128,
+    pids: 256,
   },
   signalingTokenTTLSeconds: 120,
   revokeSignalingConnections: (sessionId) => connections.revoke(sessionId),

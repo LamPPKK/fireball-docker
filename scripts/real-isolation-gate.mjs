@@ -58,7 +58,7 @@ const sessions = new SessionService(runtime, {
     maximumSessions: 2,
     memoryMiB: 1_024,
     cpuShares: 1_024,
-    pids: 256,
+    pids: 512,
   },
   revokeSignalingConnections: (sessionId) => connections.revoke(sessionId),
 });
@@ -373,7 +373,7 @@ function assertContainerBoundary(container, sessionId) {
   assert.deepEqual(container.HostConfig?.CapDrop, ["ALL"]);
   assert.equal(container.HostConfig?.Memory, 512 * 1024 * 1024);
   assert.equal(container.HostConfig?.CpuShares, 512);
-  assert.equal(container.HostConfig?.PidsLimit, 128);
+  assert.equal(container.HostConfig?.PidsLimit, 256);
   assert.equal(container.HostConfig?.NetworkMode, `fireball-net-${sessionId}`);
   assert.equal(
     container.HostConfig?.Tmpfs?.["/run/fireball-session"],

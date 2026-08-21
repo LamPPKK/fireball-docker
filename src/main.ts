@@ -41,7 +41,7 @@ const sessions = new SessionService(runtime, {
     maximumSessions: positiveEnvironment("FIREBALL_MAX_SESSIONS", 8),
     memoryMiB: positiveEnvironment("FIREBALL_MAX_MEMORY_MIB", 4_096),
     cpuShares: positiveEnvironment("FIREBALL_MAX_CPU_SHARES", 4_096),
-    pids: positiveEnvironment("FIREBALL_MAX_PIDS", 1_024),
+    pids: positiveEnvironment("FIREBALL_MAX_PIDS", 2_048),
   },
   revokeSignalingConnections: (sessionId) => signalingConnections.revoke(sessionId),
 });

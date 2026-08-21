@@ -49,7 +49,7 @@ const runtime = new DockerEngineRuntime({
 });
 const sessions = new SessionService(runtime, {
   maximumSessionsPerTenant: 1,
-  hostCapacity: { maximumSessions: 1, memoryMiB: 512, cpuShares: 512, pids: 128 },
+  hostCapacity: { maximumSessions: 1, memoryMiB: 512, cpuShares: 512, pids: 256 },
 });
 const app = buildApp({
   authenticator: new DevelopmentAuthenticator("test"),

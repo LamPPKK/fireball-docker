@@ -18,6 +18,7 @@ test("a pending create reserves the per-tenant slot before runtime startup compl
   const sessions = new SessionService(runtime);
 
   const first = sessions.create(alpha);
+  assert.equal(runtime.peekNextRequest().quota.pids, 256);
   await assert.rejects(sessions.create(alpha), isSessionLimit);
 
   runtime.resolveNext();
@@ -28,7 +29,7 @@ test("host capacity includes pending sessions from other tenants", async () => {
   const runtime = new GatedRuntime();
   const sessions = new SessionService(runtime, {
     maximumSessionsPerTenant: 2,
-    hostCapacity: { maximumSessions: 4, memoryMiB: 512, cpuShares: 512, pids: 128 },
+    hostCapacity: { maximumSessions: 4, memoryMiB: 512, cpuShares: 512, pids: 256 },
   });
 
   const first = sessions.create(alpha);
@@ -112,6 +113,12 @@ class GatedRuntime implements RuntimeAdapter {
 
   public rejectNext(): void {
     this.shiftPending().reject(new Error("simulated runtime failure"));
+  }
+
+  public peekNextRequest(): CreateRuntimeRequest {
+    const pending = this.pending[0];
+    if (!pending) throw new Error("no pending runtime create");
+    return pending.request;
   }
 
   private shiftPending(): PendingCreate {

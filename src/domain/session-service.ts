@@ -15,14 +15,14 @@ import type {
 } from "./types.js";
 import type { RuntimeAdapter } from "../runtime/runtime-adapter.js";
 
-const DEFAULT_QUOTA: SessionQuota = { memoryMiB: 512, cpuShares: 512, pids: 128 };
+const DEFAULT_QUOTA: SessionQuota = { memoryMiB: 512, cpuShares: 512, pids: 256 };
 const DEFAULT_PAIRING_TICKET_TTL_SECONDS = 60;
 const DEFAULT_SIGNALING_TOKEN_TTL_SECONDS = 30;
 const DEFAULT_HOST_CAPACITY: HostCapacity = {
   maximumSessions: 8,
   memoryMiB: 4_096,
   cpuShares: 4_096,
-  pids: 1_024,
+  pids: 2_048,
 };
 
 interface CredentialBinding {
