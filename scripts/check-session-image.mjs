@@ -211,6 +211,19 @@ for (const required of [
   assert.ok(mediaFixture.includes(required), `rswebrtc browser fixture is missing: ${required}`);
 }
 for (const required of [
+  "assertContainerTurnPreflight(instanceId)",
+  "configuration.ice.iceTransportPolicy",
+  "configuration.ice.turnServers.length",
+  "TURN STUN binding timed out",
+  "TURN STUN binding response was invalid",
+  "FIREBALL_SMOKE_TURN_PROBE_HOST",
+  "FIREBALL_SMOKE_TURN_PROBE_PORT",
+]) {
+  assert.ok(mediaGate.includes(required), `real media gate is missing TURN preflight: ${required}`);
+}
+assert.match(turnGate, /FIREBALL_SMOKE_TURN_PROBE_HOST: hostIp/);
+assert.match(turnGate, /FIREBALL_SMOKE_TURN_PROBE_PORT: String\(listeningPort\)/);
+for (const required of [
   'assertCommand("geckodriver"',
   'assertCommand("firefox"',
   '"media.gmp-gmpopenh264.enabled": true',

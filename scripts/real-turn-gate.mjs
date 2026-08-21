@@ -94,6 +94,8 @@ try {
         FIREBALL_SMOKE_ICE_SERVERS_FILE: installedIcePath,
         FIREBALL_SMOKE_BROWSER_ICE_FILE: browserIcePath,
         FIREBALL_SMOKE_EXPECT_RELAY: "1",
+        FIREBALL_SMOKE_TURN_PROBE_HOST: hostIp,
+        FIREBALL_SMOKE_TURN_PROBE_PORT: String(listeningPort),
       },
       stdio: "inherit",
     },

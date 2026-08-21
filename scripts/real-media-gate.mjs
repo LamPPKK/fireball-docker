@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { isIP } from "node:net";
 import { isAbsolute, normalize } from "node:path";
 
 import WebSocket, { WebSocketServer } from "ws";
@@ -23,6 +24,8 @@ const seccompProfilePath = process.env.FIREBALL_SMOKE_SECCOMP_PROFILE;
 const iceServersFile = process.env.FIREBALL_SMOKE_ICE_SERVERS_FILE;
 const browserIceFile = process.env.FIREBALL_SMOKE_BROWSER_ICE_FILE;
 const expectRelay = process.env.FIREBALL_SMOKE_EXPECT_RELAY === "1";
+const turnProbeHost = process.env.FIREBALL_SMOKE_TURN_PROBE_HOST;
+const turnProbePort = process.env.FIREBALL_SMOKE_TURN_PROBE_PORT;
 const fixtureTemplate = await readFile(
   new URL("./fixtures/rswebrtc-media-smoke.html", import.meta.url),
   "utf8",
@@ -43,7 +46,20 @@ if (!seccompProfilePath || !/^\/[A-Za-z0-9._/-]+$/.test(seccompProfilePath)) {
 if (expectRelay) {
   validateSafeAbsolutePath(iceServersFile, "FIREBALL_SMOKE_ICE_SERVERS_FILE");
   validateSafeAbsolutePath(browserIceFile, "FIREBALL_SMOKE_BROWSER_ICE_FILE");
-} else if (iceServersFile !== undefined || browserIceFile !== undefined) {
+  if (typeof turnProbeHost !== "string" || isIP(turnProbeHost) !== 4) {
+    throw new Error("FIREBALL_SMOKE_TURN_PROBE_HOST must be an IPv4 address");
+  }
+  if (typeof turnProbePort !== "string" || !/^[1-9]\d{0,4}$/.test(turnProbePort)) {
+    throw new Error("FIREBALL_SMOKE_TURN_PROBE_PORT must be a canonical port");
+  }
+  const numericTurnProbePort = Number(turnProbePort);
+  if (numericTurnProbePort > 65_535) throw new Error("FIREBALL_SMOKE_TURN_PROBE_PORT is out of range");
+} else if (
+  iceServersFile !== undefined
+  || browserIceFile !== undefined
+  || turnProbeHost !== undefined
+  || turnProbePort !== undefined
+) {
   throw new Error("TURN files require FIREBALL_SMOKE_EXPECT_RELAY=1");
 }
 const browserIceConfiguration = expectRelay
@@ -172,6 +188,7 @@ try {
   const created = await createSession();
   assert.equal(created.session.phase, "active");
   assert.equal(managedContainers(instanceId).length, 1);
+  if (expectRelay) assertContainerTurnPreflight(instanceId);
 
   webdriver = await startWebDriver();
   webdriverSessionId = await createWebDriverSession(webdriver.endpoint);
@@ -628,6 +645,42 @@ function managedNetworks(managedInstance) {
     "--filter", "label=dev.fireball.managed=true",
     "--filter", `label=dev.fireball.instance=${managedInstance}`,
   ]).split("\n").filter(Boolean);
+}
+
+function assertContainerTurnPreflight(managedInstance) {
+  const containers = managedContainers(managedInstance);
+  assert.equal(containers.length, 1, "TURN preflight requires one managed container");
+  const containerId = containers[0].Id;
+  assert.match(containerId, /^[a-f0-9]{64}$/);
+  const configurationProbe = [
+    "const {parseConfiguration}=await import('/opt/fireball-session/supervisor.mjs');",
+    "const configuration=parseConfiguration(process.env);",
+    "process.stdout.write(JSON.stringify({policy:configuration.ice.iceTransportPolicy,turnServers:configuration.ice.turnServers.length,stun:Boolean(configuration.ice.stunServer)}));",
+  ].join("");
+  const configuration = JSON.parse(docker([
+    "exec", containerId, "/usr/bin/node", "--input-type=module", "--eval", configurationProbe,
+  ]));
+  assert.deepEqual(configuration, { policy: "relay", turnServers: 1, stun: false });
+
+  const connectivityProbe = [
+    "import {randomBytes} from 'node:crypto';",
+    "import {createSocket} from 'node:dgram';",
+    "const host=process.argv[1];const port=Number(process.argv[2]);",
+    "const transaction=randomBytes(12);const request=Buffer.alloc(20);",
+    "request.writeUInt16BE(1,0);request.writeUInt32BE(0x2112a442,4);transaction.copy(request,8);",
+    "const socket=createSocket('udp4');",
+    "const response=await new Promise((resolve,reject)=>{",
+    "const timer=setTimeout(()=>reject(new Error('TURN STUN binding timed out')),5000);",
+    "socket.once('error',reject);socket.once('message',(message)=>{clearTimeout(timer);resolve(message);});",
+    "socket.send(request,port,host);",
+    "});socket.close();",
+    "if(response.length<20||response.readUInt16BE(0)!==0x0101||!response.subarray(8,20).equals(transaction))throw new Error('TURN STUN binding response was invalid');",
+  ].join("");
+  docker([
+    "exec", containerId, "/usr/bin/node", "--input-type=module", "--eval", connectivityProbe,
+    turnProbeHost, turnProbePort,
+  ]);
+  process.stdout.write("container TURN configuration and UDP reachability preflight passed\n");
 }
 
 function reportManagedContainerLogs(managedInstance) {
