@@ -171,6 +171,37 @@ export function pipelineArguments(configuration) {
     "run-web-server=false",
     ...iceArguments,
     "meta=meta,name=fireball-session",
+    "audiomixer",
+    "name=audio_mix",
+    "!",
+    "queue",
+    "max-size-buffers=8",
+    "!",
+    "audioconvert",
+    "!",
+    "audioresample",
+    "!",
+    "audio/x-raw,format=F32LE,rate=48000,channels=2",
+    "!",
+    "opusenc",
+    "bitrate=64000",
+    "!",
+    "rtc.",
+    "audiotestsrc",
+    "wave=silence",
+    "is-live=true",
+    "do-timestamp=true",
+    "!",
+    "queue",
+    "max-size-buffers=8",
+    "!",
+    "audioconvert",
+    "!",
+    "audioresample",
+    "!",
+    "audio/x-raw,format=F32LE,rate=48000,channels=2",
+    "!",
+    "audio_mix.",
     "web.audio_0",
     "!",
     "queue",
@@ -181,10 +212,9 @@ export function pipelineArguments(configuration) {
     "!",
     "audioresample",
     "!",
-    "opusenc",
-    "bitrate=64000",
+    "audio/x-raw,format=F32LE,rate=48000,channels=2",
     "!",
-    "rtc.",
+    "audio_mix.",
   ];
 }
 
@@ -438,7 +468,15 @@ function closeSocket(socket, code, reason) {
 }
 
 function preflight() {
-  for (const element of ["wpesrc", "webrtcsink", "openh264enc", "h264parse", "opusenc"]) {
+  for (const element of [
+    "wpesrc",
+    "webrtcsink",
+    "openh264enc",
+    "h264parse",
+    "opusenc",
+    "audiotestsrc",
+    "audiomixer",
+  ]) {
     const result = spawnSync("gst-inspect-1.0", [element], { stdio: "ignore", timeout: 5_000 });
     if (result.status !== 0) throw new Error(`required GStreamer element is unavailable: ${element}`);
   }

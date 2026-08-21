@@ -70,6 +70,8 @@ for (const required of [
   "libgles2",
   "libwpewebkit-2.0-1",
   "libgstrswebrtc.so",
+  "gst-inspect-1.0 audiotestsrc",
+  "gst-inspect-1.0 audiomixer",
   "bwrap-wrapper-builder",
   "mv /usr/bin/bwrap /usr/lib/fireball/bwrap.real",
   "/fireball-bwrap /usr/bin/bwrap",
@@ -96,6 +98,8 @@ assert.match(supervisor, /stun-server=/);
 assert.match(supervisor, /turn-servers=/);
 assert.match(supervisor, /ice-transport-policy=/);
 assert.match(supervisor, /video\/x-raw,format=BGRA/);
+assert.match(supervisor, /audiotestsrc/);
+assert.match(supervisor, /audiomixer/);
 assert.doesNotMatch(supervisor, /gldownload/);
 assert.doesNotMatch(supervisor, /stun\.l\.google\.com/);
 assert.match(dockerfile, /install -d -o root -g 10001 -m 0750 \/run\/fireball-secrets/);
