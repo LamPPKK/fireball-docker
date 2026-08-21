@@ -126,7 +126,9 @@ export function loadIceServerConfiguration(filePath) {
 export function pipelineArguments(configuration) {
   const { width, height, fps, bitrate } = configuration.profile;
   const iceArguments = [
-    `stun-server=${configuration.ice.stunServer}`,
+    configuration.ice.stunServer === ""
+      ? 'stun-server=""'
+      : `stun-server=${configuration.ice.stunServer}`,
     ...(configuration.ice.turnServers.length === 0
       ? []
       : [`turn-servers=<${configuration.ice.turnServers.map((server) => `"${server}"`).join(",")}>`]),

@@ -68,7 +68,8 @@ test("pipeline is one WPE source with explicit H264, Opus, control, and no publi
   assert.match(command, /enable-control-data-channel=true/);
   assert.match(command, /run-web-server=false/);
   assert.match(command, /signalling-server-host=127\.0\.0\.1/);
-  assert.match(command, /stun-server=(?: |$)/);
+  assert.ok(argumentsList.includes('stun-server=""'));
+  assert.equal(argumentsList.indexOf('stun-server=""') + 1, argumentsList.indexOf("ice-transport-policy=all"));
   assert.doesNotMatch(command, /stun\.l\.google\.com/);
   assert.doesNotMatch(command, new RegExp(secret));
 });
@@ -108,6 +109,32 @@ test("TURN configuration is strict and becomes explicit GStreamer ICE policy", (
     "turn-servers=<\"turns://tenant%3Aalpha:temporary%2Fcredential@turn.example.com:5349\",\"turn://tenant:credential@[2001:db8::2]:3478\">",
   ));
   assert.ok(argumentsList.includes("ice-transport-policy=relay"));
+
+  const relayOnly = parseConfiguration(
+    {
+      FIREBALL_INTERNAL_SIGNALING_SECRET: secret,
+      FIREBALL_ICE_SERVERS_FILE: "/run/fireball-secrets/ice-servers.json",
+    },
+    () => parseIceServerConfiguration(JSON.stringify({
+      schema_version: 1,
+      turn_servers: [{
+        scheme: "turn",
+        host: "turn.example.com",
+        port: 3478,
+        username: "tenant",
+        password: "credential",
+      }],
+      ice_transport_policy: "relay",
+    })),
+  );
+  const relayOnlyArguments = pipelineArguments(relayOnly);
+  const stunIndex = relayOnlyArguments.indexOf('stun-server=""');
+  assert.notEqual(stunIndex, -1);
+  assert.deepEqual(relayOnlyArguments.slice(stunIndex, stunIndex + 3), [
+    'stun-server=""',
+    'turn-servers=<"turn://tenant:credential@turn.example.com:3478">',
+    "ice-transport-policy=relay",
+  ]);
 });
 
 test("TURN configuration rejects ambiguous, credential-free, duplicate, and unsafe input", () => {
