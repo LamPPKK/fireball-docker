@@ -7,6 +7,7 @@ const dockerfile = await readFile(new URL("../session/Dockerfile", import.meta.u
 const manifest = JSON.parse(await readFile(new URL("../session/image-manifest.json", import.meta.url), "utf8"));
 const packageLock = JSON.parse(await readFile(new URL("../session/package-lock.json", import.meta.url), "utf8"));
 const supervisor = await readFile(new URL("../session/supervisor.mjs", import.meta.url), "utf8");
+const bwrapWrapper = await readFile(new URL("../session/fireball-bwrap-wrapper.c", import.meta.url), "utf8");
 const containerSmoke = await readFile(new URL("../session/container-smoke.mjs", import.meta.url), "utf8");
 const imageWorkflow = await readFile(new URL("../.github/workflows/session-image.yml", import.meta.url), "utf8");
 const appArmorProfile = await readFile(new URL("../deploy/apparmor/fireball-session", import.meta.url), "utf8");
@@ -44,6 +45,8 @@ assert.equal(manifest.gst_plugins_rs.revision, expectedPluginRevision);
 assert.deepEqual(manifest.platforms, ["linux/amd64", "linux/arm64"]);
 assert.equal(manifest.internal_signaling_port, 8444);
 assert.equal(manifest.session_uid, 10001);
+assert.equal(manifest.runtime_contract.pid_namespace, "tenant-container");
+assert.equal(manifest.runtime_contract.proc_mount, "read-only bind of container procfs");
 assert.equal(manifest.runtime_contract.public_stun_default, false);
 assert.equal(manifest.runtime_contract.ice_configuration_path, "/run/fireball-secrets/ice-servers.json");
 assert.equal(manifest.runtime_contract.ice_configuration_schema_version, 1);
@@ -59,6 +62,9 @@ for (const required of [
   "gstreamer1.0-wpe",
   "libwpewebkit-2.0-1",
   "libgstrswebrtc.so",
+  "bwrap-wrapper-builder",
+  "mv /usr/bin/bwrap /usr/lib/fireball/bwrap.real",
+  "/fireball-bwrap /usr/bin/bwrap",
   "USER 10001:10001",
   "XDG_RUNTIME_DIR=/run/fireball-session/runtime",
   "EXPOSE 8444",
@@ -68,6 +74,11 @@ for (const required of [
 }
 assert.doesNotMatch(dockerfile, /(?:FROM|image:)\s+\S+:latest/);
 assert.doesNotMatch(dockerfile, /curl|wget|--privileged/);
+assert.match(bwrapWrapper, /--unshare-pid/);
+assert.match(bwrapWrapper, /--ro-bind/);
+assert.match(bwrapWrapper, /argument descriptor is not the sealed WebKit memfd/);
+assert.match(bwrapWrapper, /capability or non-boundary overrides are forbidden/);
+assert.doesNotMatch(bwrapWrapper, /system\s*\(|popen\s*\(|seccomp=unconfined/);
 
 assert.equal(packageLock.lockfileVersion, 3);
 assert.equal(packageLock.packages["node_modules/ws"].version, "8.21.3");
@@ -98,6 +109,7 @@ assert.match(imageWorkflow, /FIREBALL_SMOKE_SECCOMP_PROFILE/);
 assert.match(appArmorProfile, /profile fireball-session flags=\(unconfined\)/);
 assert.match(appArmorProfile, /\buserns,/);
 assert.doesNotMatch(containerSmoke, /seccomp=unconfined|--privileged/);
+assert.doesNotMatch(containerSmoke, /systempaths=unconfined/);
 assert.match(containerSmoke, /seccomp=\$\{seccompProfile\}/);
 assert.equal(seccompProfile.defaultAction, "SCMP_ACT_ERRNO");
 assert.equal(seccompProfile.defaultErrnoRet, 1);
@@ -108,6 +120,8 @@ assert.deepEqual(seccompProfile.archMap, [
 assert.equal(seccompProvenance.schema_version, 1);
 assert.equal(seccompProvenance.upstream.license.spdx, "Apache-2.0");
 assert.deepEqual(seccompProvenance.policy.explicitly_not_allowed, ["clone3", "unshare", "setns"]);
+assert.equal(seccompProvenance.policy.pid_namespace, "tenant-container");
+assert.equal(seccompProvenance.policy.proc_mount, "read-only bind of container procfs");
 assert.match(seccompLoader, new RegExp(seccompProvenance.generated_profile_sha256));
 assert.match(seccompLicense, /Apache License\s+Version 2\.0/);
 assert.match(containerSmoke, /FIREBALL_SMOKE_ICE_SERVERS_FILE/);

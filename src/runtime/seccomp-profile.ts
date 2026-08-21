@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { isAbsolute, normalize } from "node:path";
 
-const EXPECTED_PROFILE_SHA256 = "a5252acc5179db57b17f3153742027f0627c887c04757e5e92a1088c45cdf435";
+const EXPECTED_PROFILE_SHA256 = "3381b0c940b421f2ba6c6f0f6a1177af6594fea98e74cd3f544562bc10ae4d03";
 const MAXIMUM_PROFILE_BYTES = 128 * 1024;
 
 interface ProfileFileOptions {

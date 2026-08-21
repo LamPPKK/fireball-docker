@@ -26,13 +26,14 @@ const supportedArchMap = [
   { architecture: "SCMP_ARCH_AARCH64", subArchitectures: null },
 ];
 
-// WPE WebKit's GLib bubblewrap launcher always creates NEWNS, NEWUSER,
-// NEWPID and NEWUTS. Web/GPU processes additionally use NEWNET, and
-// non-Web processes may add NEWIPC. Signal bits are SIGCHLD.
+// WPE WebKit's GLib bubblewrap launcher creates NEWNS, NEWUSER and NEWUTS.
+// Fireball's fail-closed wrapper retains the tenant container's private PID
+// namespace instead of requesting nested NEWPID. Web/GPU processes may add
+// NEWNET, while other process types may add NEWIPC. Signal bits are SIGCHLD.
 const bubblewrapCloneFlags = [
-  0x74020011,
-  0x7c020011,
-  0x3c020011,
+  0x54020011,
+  0x5c020011,
+  0x1c020011,
 ];
 
 const namespaceSetupRules = [
@@ -135,6 +136,8 @@ async function generate() {
       exact_clone_flag_sets: bubblewrapCloneFlags,
       namespace_setup_syscalls: ["mount", "pivot_root", "umount2"],
       explicitly_not_allowed: ["clone3", "unshare", "setns"],
+      pid_namespace: "tenant-container",
+      proc_mount: "read-only bind of container procfs",
     },
     generated_profile_sha256: digest(profileContent),
   };
@@ -179,6 +182,8 @@ async function check() {
   assert.deepEqual(provenance.policy.exact_clone_flag_sets, bubblewrapCloneFlags);
   assert.deepEqual(provenance.policy.namespace_setup_syscalls, ["mount", "pivot_root", "umount2"]);
   assert.deepEqual(provenance.policy.explicitly_not_allowed, ["clone3", "unshare", "setns"]);
+  assert.equal(provenance.policy.pid_namespace, "tenant-container");
+  assert.equal(provenance.policy.proc_mount, "read-only bind of container procfs");
   process.stdout.write("seccomp profile provenance and policy are valid\n");
 }
 

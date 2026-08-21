@@ -39,6 +39,15 @@ WORKDIR /work
 COPY session/package.json session/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
+FROM ${DEBIAN_IMAGE} AS bwrap-wrapper-builder
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY session/fireball-bwrap-wrapper.c /src/fireball-bwrap-wrapper.c
+RUN cc -std=c11 -O2 -Wall -Wextra -Werror \
+      /src/fireball-bwrap-wrapper.c \
+      -o /fireball-bwrap
+
 FROM ${DEBIAN_IMAGE}
 ARG GST_PLUGINS_RS_REV=0826007d970a473475b6bf993229ebcde173fdba
 ARG FIREBALL_SESSION_VERSION=0.1.0-dev.1
@@ -66,11 +75,14 @@ RUN apt-get update \
     && groupadd --system --gid 10001 fireball-session \
     && useradd --system --uid 10001 --gid 10001 --home-dir /run/fireball-session/home fireball-session \
     && install -d -o 10001 -g 10001 -m 0755 /run/fireball-session /usr/lib/fireball/gstreamer-1.0 /usr/share/fireball-session /opt/fireball-session/node_modules \
-    && install -d -o root -g 10001 -m 0750 /run/fireball-secrets
+    && install -d -o root -g 10001 -m 0750 /run/fireball-secrets \
+    && test -x /usr/bin/bwrap \
+    && mv /usr/bin/bwrap /usr/lib/fireball/bwrap.real
 
 COPY --from=rswebrtc-builder /opt/fireball/lib/gstreamer-1.0/libgstrswebrtc.so /usr/lib/fireball/gstreamer-1.0/libgstrswebrtc.so
 COPY --from=rswebrtc-builder /src/gst-plugins-rs/net/webrtc/LICENSE-MPL-2.0 /usr/share/fireball-session/LICENSE-rswebrtc-MPL-2.0
 COPY --from=node-dependencies /work/node_modules /opt/fireball-session/node_modules
+COPY --from=bwrap-wrapper-builder --chmod=0755 /fireball-bwrap /usr/bin/bwrap
 COPY --chown=10001:10001 session/supervisor.mjs session/healthcheck.mjs /opt/fireball-session/
 COPY --chown=10001:10001 session/home.html /usr/share/fireball-session/home.html
 

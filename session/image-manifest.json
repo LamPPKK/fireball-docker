@@ -18,6 +18,8 @@
     "storage_root": "/run/fireball-session",
     "video_codec": "H264",
     "audio_codec": "Opus",
+    "pid_namespace": "tenant-container",
+    "proc_mount": "read-only bind of container procfs",
     "public_stun_default": false,
     "ice_configuration_path": "/run/fireball-secrets/ice-servers.json",
     "ice_configuration_schema_version": 1,

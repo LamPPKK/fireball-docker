@@ -75,6 +75,7 @@ try {
   await waitForHealthy();
   assert.equal(docker(["inspect", "--format", "{{.Config.User}}", containerName]), "10001:10001");
   assert.equal(docker(["inspect", "--format", "{{.HostConfig.ReadonlyRootfs}}", containerName]), "true");
+  assert.equal(docker(["inspect", "--format", "{{.HostConfig.PidMode}}", containerName]), "");
   assertConfinement();
 
   const portOutput = docker(["port", containerName, "8444/tcp"]);

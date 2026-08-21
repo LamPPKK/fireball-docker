@@ -29,7 +29,7 @@
       "args": [
         {
           "index": 0,
-          "value": 1946288145,
+          "value": 1409417233,
           "op": "SCMP_CMP_EQ"
         }
       ],
@@ -49,7 +49,7 @@
       "args": [
         {
           "index": 0,
-          "value": 2080505873,
+          "value": 1543634961,
           "op": "SCMP_CMP_EQ"
         }
       ],
@@ -69,7 +69,7 @@
       "args": [
         {
           "index": 0,
-          "value": 1006764049,
+          "value": 469893137,
           "op": "SCMP_CMP_EQ"
         }
       ],
