@@ -24,6 +24,9 @@
       1543634961,
       469893137
     ],
+    "exact_unshare_flag_sets": [
+      268435456
+    ],
     "namespace_setup_syscalls": [
       "mount",
       "pivot_root",
@@ -31,11 +34,10 @@
     ],
     "explicitly_not_allowed": [
       "clone3",
-      "unshare",
       "setns"
     ],
     "pid_namespace": "tenant-container",
     "proc_mount": "read-only bind of container procfs"
   },
-  "generated_profile_sha256": "3381b0c940b421f2ba6c6f0f6a1177af6594fea98e74cd3f544562bc10ae4d03"
+  "generated_profile_sha256": "25677234a3bd7b0e0c249f15d980a3e92a4aa2972c42d9cbad6f247461cfd714"
 }

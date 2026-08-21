@@ -119,7 +119,8 @@ assert.deepEqual(seccompProfile.archMap, [
 ]);
 assert.equal(seccompProvenance.schema_version, 1);
 assert.equal(seccompProvenance.upstream.license.spdx, "Apache-2.0");
-assert.deepEqual(seccompProvenance.policy.explicitly_not_allowed, ["clone3", "unshare", "setns"]);
+assert.deepEqual(seccompProvenance.policy.exact_unshare_flag_sets, [0x10000000]);
+assert.deepEqual(seccompProvenance.policy.explicitly_not_allowed, ["clone3", "setns"]);
 assert.equal(seccompProvenance.policy.pid_namespace, "tenant-container");
 assert.equal(seccompProvenance.policy.proc_mount, "read-only bind of container procfs");
 assert.match(seccompLoader, new RegExp(seccompProvenance.generated_profile_sha256));

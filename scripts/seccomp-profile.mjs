@@ -42,6 +42,13 @@ const namespaceSetupRules = [
     action: "SCMP_ACT_ALLOW",
     comment: "Fireball: permit bubblewrap to construct the nested WebKit mount namespace",
   },
+  {
+    names: ["unshare"],
+    action: "SCMP_ACT_ALLOW",
+    args: [{ index: 0, value: 0x10000000, op: "SCMP_CMP_EQ" }],
+    comment: "Fireball: permit bubblewrap's exact second-level CLONE_NEWUSER setup",
+    includes: { arches: ["amd64", "arm64"] },
+  },
   ...bubblewrapCloneFlags.map((value) => ({
     names: ["clone"],
     action: "SCMP_ACT_ALLOW",
@@ -91,6 +98,13 @@ export function validateDerivative(profile, baseDocument) {
       .map((rule) => rule.args[0].value),
     bubblewrapCloneFlags,
   );
+  assert.deepEqual(
+    profile.syscalls
+      .filter((rule) => rule.action === "SCMP_ACT_ALLOW" && rule.names?.includes("unshare") && rule.args)
+      .filter((rule) => rule.args[0]?.op === "SCMP_CMP_EQ")
+      .map((rule) => rule.args[0].value),
+    [0x10000000],
+  );
 }
 
 export function serialized(document) {
@@ -134,8 +148,9 @@ async function generate() {
     policy: {
       default_action: "SCMP_ACT_ERRNO",
       exact_clone_flag_sets: bubblewrapCloneFlags,
+      exact_unshare_flag_sets: [0x10000000],
       namespace_setup_syscalls: ["mount", "pivot_root", "umount2"],
-      explicitly_not_allowed: ["clone3", "unshare", "setns"],
+      explicitly_not_allowed: ["clone3", "setns"],
       pid_namespace: "tenant-container",
       proc_mount: "read-only bind of container procfs",
     },
@@ -180,8 +195,9 @@ async function check() {
   assert.deepEqual(provenance.supported_platforms, ["linux/amd64", "linux/arm64"]);
   assert.equal(provenance.generated_profile_sha256, digest(expectedContent));
   assert.deepEqual(provenance.policy.exact_clone_flag_sets, bubblewrapCloneFlags);
+  assert.deepEqual(provenance.policy.exact_unshare_flag_sets, [0x10000000]);
   assert.deepEqual(provenance.policy.namespace_setup_syscalls, ["mount", "pivot_root", "umount2"]);
-  assert.deepEqual(provenance.policy.explicitly_not_allowed, ["clone3", "unshare", "setns"]);
+  assert.deepEqual(provenance.policy.explicitly_not_allowed, ["clone3", "setns"]);
   assert.equal(provenance.policy.pid_namespace, "tenant-container");
   assert.equal(provenance.policy.proc_mount, "read-only bind of container procfs");
   process.stdout.write("seccomp profile provenance and policy are valid\n");
