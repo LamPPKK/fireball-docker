@@ -41,7 +41,7 @@ Tickets and tokens are never accepted in query strings. A reconnect ticket can o
 
 [`session/Dockerfile`](session/Dockerfile) builds for `linux/amd64` and `linux/arm64` from a Debian Trixie multi-platform digest. It compiles only the `gst-plugin-webrtc` package from the exact GStreamer `1.26.2` source revision, with Cargo's lockfile enforced. The runtime is non-root UID/GID `10001`, uses a read-only root filesystem plus `/run/fireball-session` tmpfs, and records installed component versions inside the artifact.
 
-This is an engineering candidate, not a promoted release. The normal CI validates source, contracts, authentication behavior, deployment-adapter configuration, and image provenance. The manual `session-image` workflow must build, start, health-check, authenticate, reconnect, and smoke both architectures before a digest can be promoted. End-to-end H.264 performance, WebRTC media negotiation, real TURN traversal, and the two-tenant isolation gate remain release evidence still to collect. See [the session-image architecture and promotion gates](docs/session-image.md).
+This is an engineering candidate, not a promoted release. The normal CI validates source, contracts, authentication behavior, deployment-adapter configuration, and image provenance. [`session-image` run 32448127234](https://github.com/LamPPKK/fireball-docker/actions/runs/32448127234) passed build, start, health, authentication, reconnect, and smoke on native `linux/amd64` and `linux/arm64` runners at commit `6daa3aecde3362fcebfe49da1e5a0e8185fe1b81`. End-to-end H.264 performance, WebRTC media negotiation, real TURN traversal, exact-digest promotion, and the two-tenant isolation gate remain release evidence still to collect. See [the session-image architecture and promotion gates](docs/session-image.md).
 
 ## Production configuration
 
@@ -108,7 +108,7 @@ or Docker Desktop screenshots are not presented as product UI.
 
 ## E1 work still open
 
-- Run and pass the manual two-architecture session-image build, then publish and sign the exact promoted digest instead of rebuilding after QA.
+- Export, publish, and sign the exact multi-architecture OCI digest already selected for QA; promotion must not rebuild after testing.
 - Complete end-to-end WPE rendering, H.264/Opus negotiation, control DataChannel, reconnect, and burn tests against that exact image.
 - Validate TURN allocation and relay-only media/control against the exact candidate digest through the checked deployment adapters.
 - Run the isolation gate against a real Docker Engine and prove two tenants cannot observe cookie, storage, process, network namespace, or signaling state.
