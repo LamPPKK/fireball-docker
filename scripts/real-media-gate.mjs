@@ -286,7 +286,7 @@ async function runBrowserPass(name) {
     webdriver.endpoint,
     "POST",
     `/session/${webdriverSessionId}/url`,
-    { url: `${pageOrigin}/?pass=${encodeURIComponent(name)}-${randomBytes(4).toString("hex")}` },
+    { url: `${pageOrigin}/#pass=${encodeURIComponent(name)}-${randomBytes(4).toString("hex")}` },
   );
   const state = await waitFor(async () => {
     const current = await browserState();
