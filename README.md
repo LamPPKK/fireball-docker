@@ -19,6 +19,7 @@ Fireball's multi-tenant remote-browser orchestrator. The repository is now at th
 - Container creation is transactional: a failed start or failed Docker health check removes both the partially-created container and its network. A session is not returned to the API while its WPE/signaling runtime is still starting.
 - A synchronous reservation closes concurrent-create quota races. Per-tenant and host-wide session, memory, CPU-share, and PID limits include starts that are still pending.
 - Before listening, the orchestrator removes orphan containers and networks carrying both its managed label and exact instance label. A cleanup error aborts startup instead of accepting traffic with unknown residual state.
+- Session containers explicitly use Docker's `no` restart policy. If the GStreamer/WPE pipeline exits unexpectedly, the internal and public signaling paths close; the failed container remains stopped until the authenticated owner burns the session, after which a fresh session receives a new identity and credential set.
 - The Docker adapter uses only a Unix socket, a request timeout, read-only rootfs, dropped capabilities, `no-new-privileges`, a reviewed deny-by-default seccomp policy, PID/CPU/memory limits, and a private session tmpfs. Its random signaling port must remain bound to host loopback.
 
 Container isolation is defense-in-depth, not a guarantee against every container escape or browser zero-day.
@@ -86,7 +87,7 @@ npm run check
 docker build -f deploy/Dockerfile -t fireball/orchestrator:dev .
 ```
 
-The test suite covers cross-tenant denial, public session redaction, pairing/signaling replay and expiry, exact-origin WebSocket upgrades, dual-hop authentication, frame relay, burn-time socket revocation, session bootstrap isolation, one-controller enforcement, failed cleanup state, real asymmetric JWT signing/verification, Docker isolation options, real WPE cookie/localStorage/service-worker and burn/recreate separation, loopback-only signaling publication, read-only TURN secret mounts, strict ICE configuration, injection-safe Nginx rendering, startup health gating, idempotent cleanup, create rollback, restart reconciliation ownership, aggregate cleanup failure, and concurrent quota reservations.
+The test suite covers cross-tenant denial, public session redaction, pairing/signaling replay and expiry, exact-origin WebSocket upgrades, dual-hop authentication, frame relay, burn-time socket revocation, session bootstrap isolation, one-controller enforcement, failed cleanup state, real asymmetric JWT signing/verification, Docker isolation options, real WPE cookie/localStorage/service-worker and burn/recreate separation, loopback-only signaling publication, read-only TURN secret mounts, strict ICE configuration, injection-safe Nginx rendering, startup health gating, idempotent cleanup, create rollback, restart reconciliation ownership, pipeline-crash containment, aggregate cleanup failure, and concurrent quota reservations.
 
 ### Docker Desktop on macOS
 
@@ -111,7 +112,8 @@ or Docker Desktop screenshots are not presented as product UI.
 
 ## E1 work still open
 
-- Exercise daemon restart reconciliation, browser/encoder crash recovery, `nginx -t`, and an external TLS/WebSocket handshake against that same digest; these deployment gates are not replaced by image CI.
+- Promote a new immutable candidate only after both native runners pass restart reconciliation and pipeline-crash containment on its exact platform digests. The previously recorded `sha256:c2cbf8af…a1a3` candidate predates this gate.
+- Exercise `nginx -t` and an external TLS/WebSocket handshake against that same digest; source-only adapter tests do not replace this deployment gate.
 - Open multi-tab APIs only after that isolation gate passes.
 
 The versioned XanhTab API snapshot remains frozen. Regenerate it only after an explicitly promoted upstream artifact.

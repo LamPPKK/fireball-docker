@@ -115,6 +115,11 @@ jobs:
         env:
           FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
           FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
+      - name: Smoke restart reconciliation and pipeline crash containment
+        run: npm run session:restart-crash:smoke -- "fireball/session-wpe:test-${{ matrix.suffix }}" "${{ matrix.platform }}"
+        env:
+          FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
+          FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
       - name: Smoke rswebrtc H.264, Opus, control, reconnect, and burn
         run: npm run session:media:smoke -- "fireball/session-wpe:test-${{ matrix.suffix }}" "${{ matrix.platform }}"
         env:

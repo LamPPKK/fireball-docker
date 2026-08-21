@@ -40,6 +40,7 @@ test("Docker runtime applies the tenant isolation contract", async () => {
     ExposedPorts: Record<string, unknown>;
     HostConfig: {
       ReadonlyRootfs: boolean;
+      RestartPolicy: { Name: string; MaximumRetryCount: number };
       CapDrop: string[];
       SecurityOpt: string[];
       Memory: number;
@@ -59,6 +60,7 @@ test("Docker runtime applies the tenant isolation contract", async () => {
   assert.equal(body.Labels["dev.fireball.tenant"], "alpha");
   assert.equal(body.Labels["dev.fireball.instance"], "test-instance");
   assert.equal(body.HostConfig.ReadonlyRootfs, true);
+  assert.deepEqual(body.HostConfig.RestartPolicy, { Name: "no", MaximumRetryCount: 0 });
   assert.deepEqual(body.HostConfig.CapDrop, ["ALL"]);
   assert.deepEqual(body.HostConfig.SecurityOpt, [
     "no-new-privileges:true",

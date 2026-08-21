@@ -102,6 +102,7 @@ export class DockerEngineRuntime implements RuntimeAdapter {
           ExposedPorts: { [INTERNAL_SIGNALING_PORT]: {} },
           HostConfig: {
             AutoRemove: false,
+            RestartPolicy: { Name: "no", MaximumRetryCount: 0 },
             Memory: input.quota.memoryMiB * 1024 * 1024,
             CpuShares: input.quota.cpuShares,
             PidsLimit: input.quota.pids,
