@@ -131,8 +131,9 @@ jobs:
       - name: Install ephemeral coturn test relay
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends coturn
+          sudo apt-get install -y --no-install-recommends coturn nginx openssl
           turnserver --version
+          nginx -v
 
       - name: Load WPE user-namespace AppArmor profile
         run: sudo apparmor_parser -r deploy/apparmor/fireball-session
@@ -201,6 +202,12 @@ jobs:
 
       - name: Prove exact-digest restart reconciliation and pipeline crash containment
         run: npm run session:restart-crash:smoke -- "${{ steps.identity.outputs.runtime-tag }}" "${{ matrix.platform }}"
+        env:
+          FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
+          FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
+
+      - name: Prove exact-digest nginx -t and external TLS/WebSocket deployment
+        run: npm run session:nginx-tls:smoke -- "${{ steps.identity.outputs.runtime-tag }}" "${{ matrix.platform }}"
         env:
           FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
           FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json

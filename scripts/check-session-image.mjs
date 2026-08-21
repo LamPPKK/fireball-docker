@@ -12,6 +12,7 @@ const containerSmoke = await readFile(new URL("../session/container-smoke.mjs", 
 const isolationGate = await readFile(new URL("./real-isolation-gate.mjs", import.meta.url), "utf8");
 const browserStateGate = await readFile(new URL("./real-browser-state-gate.mjs", import.meta.url), "utf8");
 const restartCrashGate = await readFile(new URL("./real-restart-crash-gate.mjs", import.meta.url), "utf8");
+const nginxTlsGate = await readFile(new URL("./real-nginx-tls-gate.mjs", import.meta.url), "utf8");
 const browserStateServer = await readFile(new URL("./fixtures/browser-state-server.mjs", import.meta.url), "utf8");
 const mediaGate = await readFile(new URL("./real-media-gate.mjs", import.meta.url), "utf8");
 const turnGate = await readFile(new URL("./real-turn-gate.mjs", import.meta.url), "utf8");
@@ -234,6 +235,22 @@ for (const required of [
 }
 assert.doesNotMatch(restartCrashGate, /--privileged|seccomp=unconfined|systempaths=unconfined/);
 for (const required of [
+  "renderNginxConfig",
+  'sudoNginx(["-t"])',
+  'assert.equal(health.headers["strict-transport-security"]',
+  "health.tls.authorized, true",
+  "/^TLSv1\\.[23]$/",
+  "expectWrongOriginRejected",
+  "wss://${publicHost}/orchestrator/v1/signaling",
+  "await burnSession(certificate, created.session.id)",
+  "expectTicketRevoked(certificate, staleTicket.signalingTicket)",
+  'managedContainers().length, 0',
+  'managedNetworks().length, 0',
+]) {
+  assert.ok(nginxTlsGate.includes(required), `Nginx/TLS gate is missing: ${required}`);
+}
+assert.doesNotMatch(nginxTlsGate, /rejectUnauthorized:\s*false|NODE_TLS_REJECT_UNAUTHORIZED|--privileged/);
+for (const required of [
   'listen(LISTEN_PORT, LISTEN_HOST',
   'navigator.serviceWorker.register(',
   'localStorage.setItem(storageName, marker)',
@@ -256,6 +273,8 @@ for (const required of [
   "session:browser-state:smoke",
   "Smoke restart reconciliation and pipeline crash containment",
   "session:restart-crash:smoke",
+  "Smoke nginx -t and external TLS/WebSocket deployment",
+  "session:nginx-tls:smoke",
 ]) {
   assert.ok(imageWorkflow.includes(required), `session-image workflow is missing: ${required}`);
 }
@@ -272,6 +291,7 @@ for (const required of [
   "Prove exact-digest two-tenant isolation",
   "Prove exact-digest browser-state isolation and burn cleanup",
   "Prove exact-digest restart reconciliation and pipeline crash containment",
+  "Prove exact-digest nginx -t and external TLS/WebSocket deployment",
   "Prove exact-digest H.264, Opus, control, reconnect, and burn",
   "Prove exact-digest relay-only TURN twice",
   "session-candidate-evidence.mjs platform",
