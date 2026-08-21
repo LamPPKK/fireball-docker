@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fireball rswebrtc media gate</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #080b10; color: #f8fafc; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
+      main { width: min(960px, calc(100% - 32px)); }
+      video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #020409; border: 1px solid #273244; }
+      output { display: block; margin-top: 12px; color: #ff9b54; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <video id="stream" autoplay muted playsinline></video>
+      <output id="status">Starting authenticated rswebrtc media gate…</output>
+    </main>
+    <script>
+      "use strict";
+
+      // Independently implemented against gst-plugins-rs protocol at
+      // 0826007d970a473475b6bf993229ebcde173fdba (MPL-2.0 upstream).
+      const state = window.__fireballSmoke = {
+        phase: "starting",
+        signalingReady: false,
+        producerCount: 0,
+        sessionStarted: false,
+        offerHasH264: false,
+        offerHasOpus: false,
+        videoTrack: false,
+        audioTrack: false,
+        videoCodec: "",
+        audioCodec: "",
+        videoPackets: 0,
+        audioPackets: 0,
+        videoFrames: 0,
+        controlOpen: false,
+        controlAcknowledged: false,
+        signalingClosed: false,
+        errors: [],
+      };
+      const status = document.querySelector("#status");
+      const video = document.querySelector("#stream");
+      const socket = new WebSocket(`ws://${location.host}/signaling`);
+      const connection = new RTCPeerConnection({ iceServers: [] });
+      const pendingRemoteCandidates = [];
+      const pendingLocalCandidates = [];
+      let channelId = "";
+      let producerId = "";
+      let sessionId = "";
+      let controlChannel = null;
+      let controlRequestSent = false;
+      let messageChain = Promise.resolve();
+
+      function render() {
+        status.textContent = `${state.phase} · video ${state.videoPackets} packets/${state.videoFrames} frames · audio ${state.audioPackets} packets · control ${state.controlAcknowledged ? "ack" : "pending"}`;
+      }
+
+      function fail(error) {
+        const message = error instanceof Error ? error.message : String(error);
+        state.errors.push(message.slice(0, 512));
+        state.phase = "failed";
+        render();
+      }
+
+      function send(message) {
+        if (socket.readyState !== WebSocket.OPEN) throw new Error("signaling socket is not open");
+        socket.send(JSON.stringify(message));
+      }
+
+      function sendLocalCandidate(candidate) {
+        const payload = {
+          type: "peer",
+          sessionId,
+          ice: {
+            candidate: candidate.candidate,
+            sdpMLineIndex: candidate.sdpMLineIndex,
+          },
+        };
+        send(payload);
+      }
+
+      async function flushRemoteCandidates() {
+        while (pendingRemoteCandidates.length > 0) {
+          await connection.addIceCandidate(pendingRemoteCandidates.shift());
+        }
+      }
+
+      function flushLocalCandidates() {
+        while (pendingLocalCandidates.length > 0) sendLocalCandidate(pendingLocalCandidates.shift());
+      }
+
+      async function handleMessage(message) {
+        if (!message || typeof message !== "object" || typeof message.type !== "string") {
+          throw new Error("invalid signaling message");
+        }
+
+        if (message.type === "welcome") {
+          if (typeof message.peerId !== "string" || message.peerId.length === 0) {
+            throw new Error("signaling welcome omitted peerId");
+          }
+          channelId = message.peerId;
+          send({ type: "setPeerStatus", roles: ["listener"], meta: { name: "fireball-media-smoke" } });
+          return;
+        }
+
+        if (message.type === "peerStatusChanged") {
+          if (
+            message.peerId === channelId
+            && Array.isArray(message.roles)
+            && message.roles.includes("listener")
+          ) {
+            state.signalingReady = true;
+            send({ type: "list" });
+            render();
+          }
+          return;
+        }
+
+        if (message.type === "list") {
+          if (!Array.isArray(message.producers)) throw new Error("producer list is invalid");
+          const producers = message.producers.filter((producer) => (
+            producer
+            && typeof producer.id === "string"
+            && producer.meta?.name === "fireball-session"
+          ));
+          state.producerCount = producers.length;
+          if (producers.length !== 1) throw new Error(`expected one Fireball producer, received ${producers.length}`);
+          producerId = producers[0].id;
+          send({ type: "startSession", peerId: producerId });
+          return;
+        }
+
+        if (message.type === "sessionStarted") {
+          if (message.peerId !== producerId || typeof message.sessionId !== "string") {
+            throw new Error("sessionStarted identity mismatch");
+          }
+          sessionId = message.sessionId;
+          state.sessionStarted = true;
+          flushLocalCandidates();
+          render();
+          return;
+        }
+
+        if (message.type === "peer") {
+          if (!sessionId || message.sessionId !== sessionId) throw new Error("peer message session mismatch");
+          if (message.sdp) {
+            if (message.sdp.type !== "offer" || typeof message.sdp.sdp !== "string") {
+              throw new Error("producer SDP is not an offer");
+            }
+            state.offerHasH264 = /^a=rtpmap:\d+ H264\/90000\r?$/imu.test(message.sdp.sdp);
+            state.offerHasOpus = /^a=rtpmap:\d+ opus\/48000(?:\/\d+)?\r?$/imu.test(message.sdp.sdp);
+            if (!state.offerHasH264 || !state.offerHasOpus) {
+              throw new Error("producer offer does not contain both H.264 and Opus");
+            }
+            await connection.setRemoteDescription(message.sdp);
+            await flushRemoteCandidates();
+            const answer = await connection.createAnswer();
+            await connection.setLocalDescription(answer);
+            send({ type: "peer", sessionId, sdp: connection.localDescription.toJSON() });
+            return;
+          }
+          if (message.ice) {
+            const candidate = new RTCIceCandidate(message.ice);
+            if (connection.remoteDescription) await connection.addIceCandidate(candidate);
+            else pendingRemoteCandidates.push(candidate);
+            return;
+          }
+          throw new Error("peer message omitted SDP and ICE");
+        }
+
+        if (message.type === "endSession") {
+          throw new Error("producer ended the media session before the gate completed");
+        }
+
+        if (message.type === "error") {
+          throw new Error(`signaling server error: ${String(message.details).slice(0, 256)}`);
+        }
+      }
+
+      socket.addEventListener("message", (event) => {
+        messageChain = messageChain
+          .then(() => handleMessage(JSON.parse(event.data)))
+          .catch(fail);
+      });
+      socket.addEventListener("error", () => fail(new Error("signaling WebSocket error")));
+      socket.addEventListener("close", () => {
+        state.signalingClosed = true;
+        if (state.phase !== "passed" && state.phase !== "stopped" && state.phase !== "burned") {
+          fail(new Error("signaling WebSocket closed before the gate completed"));
+        }
+      });
+
+      connection.addEventListener("icecandidate", (event) => {
+        if (!event.candidate) return;
+        if (sessionId) sendLocalCandidate(event.candidate);
+        else pendingLocalCandidates.push(event.candidate);
+      });
+      connection.addEventListener("connectionstatechange", () => {
+        if (["failed", "closed"].includes(connection.connectionState) && state.phase !== "stopped" && state.phase !== "burned") {
+          fail(new Error(`peer connection entered ${connection.connectionState}`));
+        }
+      });
+      connection.addEventListener("track", (event) => {
+        if (event.track.kind === "video") state.videoTrack = true;
+        if (event.track.kind === "audio") state.audioTrack = true;
+        let stream = video.srcObject;
+        if (!(stream instanceof MediaStream)) {
+          stream = event.streams[0] ?? new MediaStream();
+          video.srcObject = stream;
+        }
+        if (!stream.getTracks().includes(event.track)) stream.addTrack(event.track);
+        video.play().catch(() => {});
+        render();
+      });
+      connection.addEventListener("datachannel", (event) => {
+        if (event.channel.label !== "control") return;
+        controlChannel = event.channel;
+        controlChannel.addEventListener("open", () => {
+          state.controlOpen = true;
+          if (!controlRequestSent) {
+            controlRequestSent = true;
+            controlChannel.send(JSON.stringify({
+              id: 0,
+              request: {
+                type: "navigationEvent",
+                event: {
+                  event: "MouseMove",
+                  x: 32,
+                  y: 32,
+                  modifier_state: "",
+                },
+              },
+            }));
+          }
+          render();
+        });
+        controlChannel.addEventListener("message", (messageEvent) => {
+          try {
+            const response = JSON.parse(messageEvent.data);
+            if (response.type === "ControlResponseMessage" && response.id === 0 && response.error === null) {
+              state.controlAcknowledged = true;
+              render();
+            }
+          } catch (error) {
+            fail(error);
+          }
+        });
+        controlChannel.addEventListener("error", () => fail(new Error("control DataChannel error")));
+      });
+
+      async function sampleStats() {
+        if (state.phase === "failed" || state.phase === "stopped" || state.phase === "burned") return;
+        const report = await connection.getStats();
+        const codecs = new Map();
+        for (const item of report.values()) {
+          if (item.type === "codec") codecs.set(item.id, item);
+        }
+        for (const item of report.values()) {
+          if (item.type !== "inbound-rtp" || item.isRemote) continue;
+          const kind = item.kind ?? item.mediaType;
+          const codec = codecs.get(item.codecId);
+          if (kind === "video") {
+            state.videoPackets = Math.max(state.videoPackets, item.packetsReceived ?? 0);
+            state.videoFrames = Math.max(state.videoFrames, item.framesDecoded ?? 0);
+            state.videoCodec = codec?.mimeType ?? state.videoCodec;
+          }
+          if (kind === "audio") {
+            state.audioPackets = Math.max(state.audioPackets, item.packetsReceived ?? 0);
+            state.audioCodec = codec?.mimeType ?? state.audioCodec;
+          }
+        }
+        const videoCodecMatches = state.videoCodec.toLowerCase() === "video/h264";
+        const audioCodecMatches = state.audioCodec.toLowerCase() === "audio/opus";
+        if (
+          state.signalingReady
+          && state.producerCount === 1
+          && state.sessionStarted
+          && state.offerHasH264
+          && state.offerHasOpus
+          && state.videoTrack
+          && state.audioTrack
+          && videoCodecMatches
+          && audioCodecMatches
+          && state.videoPackets > 0
+          && state.audioPackets > 0
+          && state.videoFrames > 0
+          && state.controlOpen
+          && state.controlAcknowledged
+        ) {
+          state.phase = "passed";
+        }
+        render();
+      }
+
+      const statsTimer = setInterval(() => sampleStats().catch(fail), 500);
+      window.__fireballStop = () => {
+        clearInterval(statsTimer);
+        state.phase = "stopped";
+        if (controlChannel) controlChannel.close();
+        connection.close();
+        socket.close(1000, "media smoke reconnect");
+        render();
+      };
+      window.__fireballMarkBurned = () => {
+        clearInterval(statsTimer);
+        state.phase = "burned";
+        render();
+      };
+      render();
+    </script>
+  </body>
+</html>
