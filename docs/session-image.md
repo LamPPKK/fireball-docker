@@ -4,7 +4,7 @@
 
 The `0.1.0-dev.1` session image is an E1 engineering candidate. Its source contract, bootstrap boundary, and Docker lifecycle are implemented and tested. It is not a release until both architecture builds, end-to-end media/control tests, and the tenant-isolation gate pass against the same immutable digest.
 
-The latest AMD64 runtime evidence is still **NO-GO**. Workflow run `32398205717` at commit `d3f5d89` proved that Docker applied `apparmor=fireball-session` and emitted no AppArmor denial, but WPE's bubblewrap process was still denied while creating its nested namespace under Docker's default seccomp profile. ARM64 was intentionally canceled after the AMD64 failure. No relaxed seccomp profile has been accepted or committed, and the WebKit sandbox remains enabled.
+Workflow run `32442811942` at commit `2cc0ad6` reproduced the previous **NO-GO** under Docker's built-in seccomp profile: the amd64 image and plugins passed, AppArmor was applied without a denial, then bubblewrap failed its first nested namespace creation. The obsolete arm64 build was canceled after the failure was captured. The repository now contains a checksum-locked custom policy for the next gate run; this document does not call it a pass until both architecture jobs execute successfully on the exact new commit.
 
 ## Provenance
 
@@ -12,6 +12,7 @@ The latest AMD64 runtime evidence is still **NO-GO**. Workflow run `32398205717`
 - WPE: `gstreamer1.0-wpe` and `libwpewebkit-2.0-1` from Trixie repositories at image-build time; exact installed versions are written to `/usr/share/fireball-session/component-versions.txt`.
 - rswebrtc: upstream `gst-plugins-rs` tag `gstreamer-1.26.2`, pinned to commit `0826007d970a473475b6bf993229ebcde173fdba` and built with `cargo cinstall --locked`.
 - Runtime proxy: Node.js from Trixie plus `ws@8.21.3`, locked with an npm integrity hash.
+- Container seccomp: Moby's deny-by-default profile at the exact commit and checksum in `deploy/seccomp/fireball-session.provenance.json`, restricted to amd64/arm64 and extended only for the reviewed WPE bubblewrap setup calls.
 
 The development build still resolves Debian security packages during the build. Release promotion must record the resulting OCI digest and attached SBOM/provenance; a production orchestrator rejects mutable image references.
 
@@ -36,7 +37,8 @@ An operator may configure TURN through the [deployment adapter](deployment-adapt
 
 - UID/GID `10001` runs the supervisor, WPE WebKit children, and GStreamer pipeline.
 - The root filesystem is read-only and all capabilities are dropped with `no-new-privileges`.
-- Ubuntu 24.04 hosts load the named `fireball-session` AppArmor profile, whose sole purpose is to permit the unprivileged user namespace required by WebKit's bubblewrap child-process sandbox. This addresses the host AppArmor boundary only; Docker's default seccomp policy still blocks the current runtime candidate. The image does not disable the WebKit sandbox or request an unconfined seccomp profile.
+- Ubuntu 24.04 hosts load the named `fireball-session` AppArmor profile, whose sole purpose is to permit the unprivileged user namespace required by WebKit's bubblewrap child-process sandbox.
+- Every production session also receives `deploy/seccomp/fireball-session.json`. It preserves Moby's `SCMP_ACT_ERRNO` default, permits only three exact `clone()` namespace flag sets used by the WPE launcher, and permits `mount`, `pivot_root`, and `umount2` for bubblewrap's setup phase. It does not allow `clone3`, `unshare`, `setns`, add capabilities, or disable seccomp. WebKit installs its own inner filter after setup and blocks namespace/mount operations in the web process.
 - Cookie, cache, configuration, GStreamer registry, and runtime state are rooted below `/run/fireball-session`.
 - The portable Docker profile negotiates WPE's system-memory BGRA output before color conversion, avoiding a mandatory EGL/GPU dependency. Hardware/zero-copy profiles remain benchmark-gated deployment variants.
 - Docker mounts that path as a `256 MiB` tmpfs owned by UID/GID `10001`, with `noexec`, `nosuid`, and `nodev`.
@@ -65,6 +67,17 @@ npm run check
 ```
 
 The `session-image` GitHub workflow builds and loads each architecture independently under Buildx/QEMU, then checks `wpesrc`, `webrtcsink`, `openh264enc`, the non-root user, supervisor syntax, and embedded component versions. It rejects an ICE fixture with unsafe permissions, then starts the image with a valid read-only TURN fixture plus the production read-only/capability/tmpfs restrictions. The smoke waits for Docker health, proving the pinned GStreamer build parses the TURN properties, verifies loopback-only signaling, rejects a bad bootstrap secret and a second controller, and proves the controller lease can reconnect before removing the container. It does not prove a real TURN allocation because the fixture deliberately uses the reserved `.invalid` domain.
+
+Install the reviewed host policy without changing its bytes:
+
+```sh
+sudo install -d -o root -g root -m 0755 /etc/fireball
+sudo install -o root -g root -m 0444 \
+  deploy/seccomp/fireball-session.json \
+  /etc/fireball/fireball-session-seccomp.json
+```
+
+Set `FIREBALL_SESSION_SECCOMP_PROFILE=/etc/fireball/fireball-session-seccomp.json`. The orchestrator opens it without following a final symlink, checks regular-file type, size, ownership, mode, read-time metadata stability, and the exact reviewed SHA-256 before sending compact JSON to Docker Engine. Any mismatch aborts production startup.
 
 Promotion additionally requires:
 

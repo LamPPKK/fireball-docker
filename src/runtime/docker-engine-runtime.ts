@@ -12,6 +12,7 @@ import {
   type DockerNetworkSummary,
 } from "./docker-engine-transport.js";
 import type { CreateRuntimeRequest, ReconciliationResult, RuntimeAdapter } from "./runtime-adapter.js";
+import { validateProfileShape } from "./seccomp-profile.js";
 
 export interface DockerEngineOptions {
   readonly socketPath: string;
@@ -19,6 +20,7 @@ export interface DockerEngineOptions {
   readonly image: string;
   readonly instanceId: string;
   readonly appArmorProfile?: string;
+  readonly seccompProfile?: string;
   readonly iceServersFile?: string;
   readonly startupHealthAttempts?: number;
   readonly startupHealthIntervalMs?: number;
@@ -43,6 +45,7 @@ export class DockerEngineRuntime implements RuntimeAdapter {
     if (options.appArmorProfile !== undefined && !isSafeSecurityProfile(options.appArmorProfile)) {
       throw new Error("session AppArmor profile is invalid");
     }
+    if (options.seccompProfile !== undefined) validateSeccompProfile(options.seccompProfile);
     if (
       options.iceServersFile !== undefined
       && (
@@ -105,6 +108,9 @@ export class DockerEngineRuntime implements RuntimeAdapter {
               ...(this.options.appArmorProfile === undefined
                 ? []
                 : [`apparmor=${this.options.appArmorProfile}`]),
+              ...(this.options.seccompProfile === undefined
+                ? []
+                : [`seccomp=${this.options.seccompProfile}`]),
             ],
             Tmpfs: {
               "/run/fireball-session": "rw,noexec,nosuid,nodev,size=256m,mode=0700,uid=10001,gid=10001",
@@ -315,6 +321,23 @@ function isSafeLabelValue(value: string): boolean {
 
 function isSafeSecurityProfile(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value);
+}
+
+function validateSeccompProfile(value: string): void {
+  if (value.length === 0 || value.length > 128 * 1024 || value.includes("\0")) {
+    throw new Error("session seccomp profile is invalid");
+  }
+  let document: unknown;
+  try {
+    document = JSON.parse(value);
+  } catch {
+    throw new Error("session seccomp profile is invalid");
+  }
+  try {
+    validateProfileShape(document);
+  } catch {
+    throw new Error("session seccomp profile is invalid");
+  }
 }
 
 function positiveInteger(value: number, name: string): number {

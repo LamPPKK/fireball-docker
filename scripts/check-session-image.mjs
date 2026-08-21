@@ -10,6 +10,19 @@ const supervisor = await readFile(new URL("../session/supervisor.mjs", import.me
 const containerSmoke = await readFile(new URL("../session/container-smoke.mjs", import.meta.url), "utf8");
 const imageWorkflow = await readFile(new URL("../.github/workflows/session-image.yml", import.meta.url), "utf8");
 const appArmorProfile = await readFile(new URL("../deploy/apparmor/fireball-session", import.meta.url), "utf8");
+const seccompLoader = await readFile(new URL("../src/runtime/seccomp-profile.ts", import.meta.url), "utf8");
+const seccompProfile = JSON.parse(await readFile(
+  new URL("../deploy/seccomp/fireball-session.json", import.meta.url),
+  "utf8",
+));
+const seccompProvenance = JSON.parse(await readFile(
+  new URL("../deploy/seccomp/fireball-session.provenance.json", import.meta.url),
+  "utf8",
+));
+const seccompLicense = await readFile(
+  new URL("../deploy/seccomp/LICENSE-MOBY-PROFILES-APACHE-2.0", import.meta.url),
+  "utf8",
+);
 const iceFixture = JSON.parse(await readFile(
   new URL("../session/test/fixtures/ice-servers.json", import.meta.url),
   "utf8",
@@ -81,9 +94,22 @@ for (const required of [
 assert.match(imageWorkflow, /npm run container:smoke --prefix session/);
 assert.match(imageWorkflow, /actions\/setup-node@v6/);
 assert.match(imageWorkflow, /apparmor_parser -r deploy\/apparmor\/fireball-session/);
+assert.match(imageWorkflow, /FIREBALL_SMOKE_SECCOMP_PROFILE/);
 assert.match(appArmorProfile, /profile fireball-session flags=\(unconfined\)/);
 assert.match(appArmorProfile, /\buserns,/);
 assert.doesNotMatch(containerSmoke, /seccomp=unconfined|--privileged/);
+assert.match(containerSmoke, /seccomp=\$\{seccompProfile\}/);
+assert.equal(seccompProfile.defaultAction, "SCMP_ACT_ERRNO");
+assert.equal(seccompProfile.defaultErrnoRet, 1);
+assert.deepEqual(seccompProfile.archMap, [
+  { architecture: "SCMP_ARCH_X86_64", subArchitectures: null },
+  { architecture: "SCMP_ARCH_AARCH64", subArchitectures: null },
+]);
+assert.equal(seccompProvenance.schema_version, 1);
+assert.equal(seccompProvenance.upstream.license.spdx, "Apache-2.0");
+assert.deepEqual(seccompProvenance.policy.explicitly_not_allowed, ["clone3", "unshare", "setns"]);
+assert.match(seccompLoader, new RegExp(seccompProvenance.generated_profile_sha256));
+assert.match(seccompLicense, /Apache License\s+Version 2\.0/);
 assert.match(containerSmoke, /FIREBALL_SMOKE_ICE_SERVERS_FILE/);
 assert.match(containerSmoke, /target=\/run\/fireball-secrets\/ice-servers\.json,readonly/);
 assert.equal(iceFixture.schema_version, 1);

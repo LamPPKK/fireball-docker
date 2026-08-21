@@ -9,13 +9,15 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "npm run contracts:check && npm run deployment:check && npm run session:image:check && npm run session:check && npm run build && npm test",
+    "check": "npm run contracts:check && npm run deployment:check && npm run seccomp:check && npm run session:image:check && npm run session:check && npm run build && npm test",
     "contracts:generate": "node scripts/sync-xanhtab-contract.mjs",
     "contracts:check": "node scripts/check-xanhtab-contract.mjs",
     "dev": "node --enable-source-maps dist/src/main.js",
     "deployment:check": "node --check scripts/render-nginx-config.mjs && node --check scripts/install-nginx-config.mjs && node --test test/deployment-adapters.test.mjs",
     "session:check": "npm run check --prefix session",
     "session:image:check": "node scripts/check-session-image.mjs",
+    "seccomp:check": "node --check scripts/seccomp-profile.mjs && node scripts/seccomp-profile.mjs check",
+    "seccomp:generate": "node scripts/seccomp-profile.mjs generate",
     "test": "node --test dist/test/*.test.js"
   },
   "dependencies": {

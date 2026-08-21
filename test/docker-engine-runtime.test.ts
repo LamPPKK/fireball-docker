@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { OrchestratorError } from "../src/domain/errors.js";
@@ -13,6 +15,10 @@ const request = {
   tenantId: "alpha",
   quota: { memoryMiB: 512, cpuShares: 512, pids: 128 },
 } as const;
+const seccompProfile = JSON.stringify(JSON.parse(readFileSync(
+  join(process.cwd(), "deploy/seccomp/fireball-session.json"),
+  "utf8",
+)));
 
 test("Docker runtime applies the tenant isolation contract", async () => {
   const transport = new RecordingTransport([{}, { Id: "container-1" }, {}, signalingInspect("49152")]);
@@ -57,6 +63,7 @@ test("Docker runtime applies the tenant isolation contract", async () => {
   assert.deepEqual(body.HostConfig.SecurityOpt, [
     "no-new-privileges:true",
     "apparmor=fireball-session",
+    `seccomp=${seccompProfile}`,
   ]);
   assert.equal(body.HostConfig.Memory, 512 * 1024 * 1024);
   assert.equal(body.HostConfig.PidsLimit, 128);
@@ -107,6 +114,21 @@ test("Docker runtime rejects relative TURN secret paths", () => {
     assert.throws(
       () => makeRuntime(transport, { iceServersFile }),
       /absolute host path/,
+    );
+  }
+});
+
+test("Docker runtime rejects permissive or malformed seccomp policy", () => {
+  const transport = new RecordingTransport([]);
+  for (const candidate of [
+    "not-json",
+    JSON.stringify({ defaultAction: "SCMP_ACT_ALLOW" }),
+    JSON.stringify({ defaultAction: "SCMP_ACT_ERRNO" }),
+    "",
+  ]) {
+    assert.throws(
+      () => makeRuntime(transport, { seccompProfile: candidate }),
+      /seccomp profile is invalid/,
     );
   }
 });
@@ -305,7 +327,7 @@ test("startup reconciliation fails closed on an invalid Docker list response", a
 
 function makeRuntime(
   transport: DockerEngineTransport,
-  overrides: { readonly iceServersFile?: string } = {},
+  overrides: { readonly iceServersFile?: string; readonly seccompProfile?: string } = {},
 ): DockerEngineRuntime {
   return new DockerEngineRuntime(
     {
@@ -314,6 +336,7 @@ function makeRuntime(
       image: "fireball/session-wpe:test",
       instanceId: "test-instance",
       appArmorProfile: "fireball-session",
+      seccompProfile,
       startupHealthAttempts: 3,
       startupHealthIntervalMs: 1,
       ...overrides,

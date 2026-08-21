@@ -76,6 +76,7 @@ jobs:
         run: npm run container:smoke --prefix session -- "fireball/session-wpe:test-${{ matrix.suffix }}" "${{ matrix.platform }}"
         env:
           FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
+          FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
           FIREBALL_SMOKE_ICE_SERVERS_FILE: /tmp/fireball-ice-${{ matrix.suffix }}.json
       - name: Remove TURN smoke fixtures
         if: always()

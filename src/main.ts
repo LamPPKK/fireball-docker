@@ -4,6 +4,7 @@ import type { Authenticator } from "./auth/authenticator.js";
 import { buildApp } from "./app.js";
 import { SessionService } from "./domain/session-service.js";
 import { DockerEngineRuntime } from "./runtime/docker-engine-runtime.js";
+import { readSessionSeccompProfile } from "./runtime/seccomp-profile.js";
 import { SignalingConnectionRegistry } from "./signaling/connection-registry.js";
 import { SignalingGateway } from "./signaling/signaling-gateway.js";
 import { WebSocketSignalingConnector } from "./signaling/upstream-connector.js";
@@ -27,6 +28,7 @@ const runtime = new DockerEngineRuntime({
     ? requiredEnvironment("FIREBALL_INSTANCE_ID")
     : process.env.FIREBALL_INSTANCE_ID ?? "development",
   ...optionalAppArmorProfile(),
+  ...await sessionSeccompProfile(environment),
   ...optionalIceServersFile(),
   startupHealthAttempts: positiveEnvironment("FIREBALL_SESSION_HEALTH_ATTEMPTS", 60),
   startupHealthIntervalMs: positiveEnvironment("FIREBALL_SESSION_HEALTH_INTERVAL_MS", 1_000),
@@ -91,6 +93,20 @@ function optionalAppArmorProfile(): { readonly appArmorProfile?: string } {
 function optionalIceServersFile(): { readonly iceServersFile?: string } {
   const value = process.env.FIREBALL_ICE_SERVERS_FILE?.trim();
   return value ? { iceServersFile: value } : {};
+}
+
+async function sessionSeccompProfile(
+  nodeEnvironment: string,
+): Promise<{ readonly seccompProfile?: string }> {
+  const path = nodeEnvironment === "production"
+    ? requiredEnvironment("FIREBALL_SESSION_SECCOMP_PROFILE")
+    : process.env.FIREBALL_SESSION_SECCOMP_PROFILE?.trim();
+  if (!path) return {};
+  return {
+    seccompProfile: await readSessionSeccompProfile(path, {
+      requireRootOwner: nodeEnvironment === "production",
+    }),
+  };
 }
 
 function sessionImage(nodeEnvironment: string): string {

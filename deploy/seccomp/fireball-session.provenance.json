@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "upstream": {
+    "repository": "https://github.com/moby/profiles",
+    "raw_url": "https://raw.githubusercontent.com/moby/profiles/f9bc03ec19b2dc4c091449b08e88f85c0caa9f0b/seccomp/default.json",
+    "commit": "f9bc03ec19b2dc4c091449b08e88f85c0caa9f0b",
+    "path": "seccomp/default.json",
+    "sha256": "536529b665dd0972c37bfb569f5d4ac8a53592e7b00752bc39ff063ca9864c74",
+    "license": {
+      "spdx": "Apache-2.0",
+      "path": "LICENSE",
+      "raw_url": "https://raw.githubusercontent.com/moby/profiles/f9bc03ec19b2dc4c091449b08e88f85c0caa9f0b/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    }
+  },
+  "supported_platforms": [
+    "linux/amd64",
+    "linux/arm64"
+  ],
+  "policy": {
+    "default_action": "SCMP_ACT_ERRNO",
+    "exact_clone_flag_sets": [
+      1946288145,
+      2080505873,
+      1006764049
+    ],
+    "namespace_setup_syscalls": [
+      "mount",
+      "pivot_root",
+      "umount2"
+    ],
+    "explicitly_not_allowed": [
+      "clone3",
+      "unshare",
+      "setns"
+    ]
+  },
+  "generated_profile_sha256": "a5252acc5179db57b17f3153742027f0627c887c04757e5e92a1088c45cdf435"
+}

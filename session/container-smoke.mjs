@@ -7,6 +7,7 @@ import WebSocket from "ws";
 const image = process.argv[2];
 const platform = process.argv[3];
 const appArmorProfile = process.env.FIREBALL_SMOKE_APPARMOR_PROFILE;
+const seccompProfile = process.env.FIREBALL_SMOKE_SECCOMP_PROFILE;
 const iceServersFile = process.env.FIREBALL_SMOKE_ICE_SERVERS_FILE;
 
 if (typeof image !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/@:-]{0,254}$/.test(image)) {
@@ -17,6 +18,9 @@ if (platform !== undefined && !["linux/amd64", "linux/arm64"].includes(platform)
 }
 if (appArmorProfile !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(appArmorProfile)) {
   throw new Error("FIREBALL_SMOKE_APPARMOR_PROFILE is invalid");
+}
+if (seccompProfile !== undefined && !/^\/[A-Za-z0-9._/-]+$/.test(seccompProfile)) {
+  throw new Error("FIREBALL_SMOKE_SECCOMP_PROFILE must be a safe absolute path");
 }
 if (iceServersFile !== undefined && !/^\/[A-Za-z0-9._/-]+$/.test(iceServersFile)) {
   throw new Error("FIREBALL_SMOKE_ICE_SERVERS_FILE is invalid");
@@ -31,6 +35,9 @@ try {
   const platformArguments = platform ? ["--platform", platform] : [];
   const appArmorArguments = appArmorProfile
     ? ["--security-opt", `apparmor=${appArmorProfile}`]
+    : [];
+  const seccompArguments = seccompProfile
+    ? ["--security-opt", `seccomp=${seccompProfile}`]
     : [];
   const iceServerArguments = iceServersFile
     ? [
@@ -50,6 +57,7 @@ try {
     "--cap-drop=ALL",
     "--security-opt=no-new-privileges:true",
     ...appArmorArguments,
+    ...seccompArguments,
     "--pids-limit=128",
     "--memory=512m",
     "--tmpfs",
@@ -63,21 +71,11 @@ try {
   ]);
   containerCreated = true;
 
+  assertConfinement();
   await waitForHealthy();
   assert.equal(docker(["inspect", "--format", "{{.Config.User}}", containerName]), "10001:10001");
   assert.equal(docker(["inspect", "--format", "{{.HostConfig.ReadonlyRootfs}}", containerName]), "true");
-  const securityOptions = JSON.parse(
-    docker(["inspect", "--format", "{{json .HostConfig.SecurityOpt}}", containerName]),
-  );
-  assert.ok(Array.isArray(securityOptions));
-  assert.ok(securityOptions.includes("no-new-privileges:true"));
-  if (appArmorProfile) {
-    assert.equal(
-      docker(["inspect", "--format", "{{.AppArmorProfile}}", containerName]),
-      appArmorProfile,
-    );
-    assert.ok(securityOptions.includes(`apparmor=${appArmorProfile}`));
-  }
+  assertConfinement();
 
   const portOutput = docker(["port", containerName, "8444/tcp"]);
   const portMatch = /^127\.0\.0\.1:([1-9][0-9]{0,4})$/.exec(portOutput);
@@ -102,7 +100,7 @@ try {
     const confinement = docker([
       "inspect",
       "--format",
-      "apparmor={{.AppArmorProfile}} security={{json .HostConfig.SecurityOpt}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}",
+      "apparmor={{.AppArmorProfile}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}",
       containerName,
     ], { allowFailure: true });
     if (confinement) process.stderr.write(`--- session confinement ---\n${confinement}\n`);
@@ -112,6 +110,28 @@ try {
   throw error;
 } finally {
   if (containerCreated) docker(["rm", "--force", "--volumes", containerName], { allowFailure: true });
+}
+
+function assertConfinement() {
+  const securityOptions = JSON.parse(
+    docker(["inspect", "--format", "{{json .HostConfig.SecurityOpt}}", containerName]),
+  );
+  assert.ok(Array.isArray(securityOptions));
+  assert.ok(securityOptions.includes("no-new-privileges:true"));
+  if (appArmorProfile) {
+    assert.equal(
+      docker(["inspect", "--format", "{{.AppArmorProfile}}", containerName]),
+      appArmorProfile,
+    );
+    assert.ok(securityOptions.includes(`apparmor=${appArmorProfile}`));
+  }
+  if (seccompProfile) {
+    const option = securityOptions.find((value) => value.startsWith("seccomp="));
+    assert.ok(option, "custom seccomp profile was not applied");
+    const document = JSON.parse(option.slice("seccomp=".length));
+    assert.equal(document.defaultAction, "SCMP_ACT_ERRNO");
+    assert.equal(document.defaultErrnoRet, 1);
+  }
 }
 
 async function waitForHealthy() {
