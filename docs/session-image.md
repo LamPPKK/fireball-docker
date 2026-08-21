@@ -37,11 +37,11 @@ After QA, Syft produces one SPDX JSON document per platform. The workflow record
 
 The `candidate-<commit>` tag is only a discovery pointer and can be replaced by an explicit rerun. Consumers must deploy the exact index digest from the evidence. QA platform tags are intentionally retained as forensic inputs if a later merge/sign step fails; they are not releases.
 
-Workflow run [`32460840856`](https://github.com/LamPPKK/fireball-docker/actions/runs/32460840856) at commit `0cb25f87558fb86c38348a3398db2ea96b153ce4` is the first **PASS** for this no-rebuild candidate lane. The arm64 platform job passed in 11 minutes 10 seconds and the amd64 job in 13 minutes 25 seconds; the index validation, attestation, and signing job then passed in 41 seconds. Evidence identifies:
+Workflow run [`32462226152`](https://github.com/LamPPKK/fireball-docker/actions/runs/32462226152) at commit `d2ec927bb54fefe0875d36a4f8f690c03b31e051` is the current clean **PASS** for this no-rebuild candidate lane, using the commit-pinned Node 24 artifact actions. The arm64 platform job passed in 3 minutes 21 seconds and the amd64 job in 3 minutes 57 seconds; the index validation, attestation, and signing job then passed in 26 seconds. Evidence identifies:
 
-- `linux/amd64`: `sha256:1a8b4903f717fbe21a5d1ef4c734e205e92b11e1995e130a43586bd24393a485`
-- `linux/arm64`: `sha256:868d34d818b09cc21fed3881cb8368225e165d9aaf60560de0110140cb638f59`
-- promoted OCI index: `ghcr.io/lamppkk/fireball-session@sha256:018701ab0b4e17535a15d15a1ea7bea1ffca7be8d3aad10957b872a43884e21a`
+- `linux/amd64`: `sha256:9363cfdd5ee6b050cab55d2a50611292df97e659dae6e6cb0e1d5eb56b50dca4`
+- `linux/arm64`: `sha256:bbae432948d71ff2b763c2783735f9ba35004eef23be24692eeb41874976ceae`
+- promoted OCI index: `ghcr.io/lamppkk/fireball-session@sha256:c2cbf8afbcbc188471c654b67e6af3b98970cf0040b108bbfb906fb230dda1a3`
 
 The downloaded evidence bundle passed the repository's normative validator again after the workflow completed. Independent `gh attestation verify` checks accepted both the SLSA provenance and `https://fireball.dev/attestations/session-candidate/v1` predicate when locked to `session-candidate.yml` and the source commit. The workflow itself also completed exact-identity Cosign verification.
 
