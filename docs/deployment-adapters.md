@@ -1,6 +1,6 @@
 # TURN and reverse-proxy deployment adapters
 
-These adapters keep deployment credentials outside both Fireball OCI images. [`session-candidate` run 32464998826](https://github.com/LamPPKK/fireball-docker/actions/runs/32464998826) repeated the two-tenant, browser-state, restart/crash, Nginx TLS/WebSocket, media/control, and relay-only TURN gates against the exact promoted platform digests before creating `ghcr.io/lamppkk/fireball-session@sha256:70b3836ac5d5802224859b7e8b618bc5c8ab1718f6a9c483511829bcf6d7c364`. This remains a candidate rather than a production deployment: public certificate issuance, DNS, firewall policy, and operator-host soak testing are outside CI.
+These adapters keep deployment credentials outside both Fireball OCI images. [`session-candidate` run 32470322375](https://github.com/LamPPKK/fireball-docker/actions/runs/32470322375) repeated the two-tenant, browser-state, restart/crash, one-container four-tab, Nginx TLS/WebSocket, media/control, and relay-only TURN gates against the exact promoted platform digests before creating `ghcr.io/lamppkk/fireball-session@sha256:0c092da4f5b67681c19ad8f6d75325be09801d8e884235bb814aab7a31d81bcf`. This remains a candidate rather than a production deployment: public certificate issuance, DNS, firewall policy, operator-host soak testing, and performance/capacity qualification are outside CI.
 
 ## TURN secret file
 
