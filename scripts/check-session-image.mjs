@@ -104,6 +104,9 @@ for (const required of [
 }
 assert.match(imageWorkflow, /npm run container:smoke --prefix session/);
 assert.match(imageWorkflow, /actions\/setup-node@v6/);
+assert.match(imageWorkflow, /runner: ubuntu-24\.04\n/);
+assert.match(imageWorkflow, /runner: ubuntu-24\.04-arm\n/);
+assert.doesNotMatch(imageWorkflow, /setup-qemu-action/);
 assert.match(imageWorkflow, /apparmor_parser -r deploy\/apparmor\/fireball-session/);
 assert.match(imageWorkflow, /FIREBALL_SMOKE_SECCOMP_PROFILE/);
 assert.match(appArmorProfile, /profile fireball-session flags=\(unconfined\)/);

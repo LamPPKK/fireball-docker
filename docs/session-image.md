@@ -67,7 +67,7 @@ npm ci --prefix session --ignore-scripts
 npm run check
 ```
 
-The `session-image` GitHub workflow builds and loads each architecture independently under Buildx/QEMU, then checks `wpesrc`, `webrtcsink`, `openh264enc`, the non-root user, supervisor syntax, and embedded component versions. It rejects an ICE fixture with unsafe permissions, then starts the image with a valid read-only TURN fixture plus the production read-only/capability/tmpfs restrictions. The smoke waits for Docker health, proving the pinned GStreamer build parses the TURN properties, verifies loopback-only signaling, rejects a bad bootstrap secret and a second controller, and proves the controller lease can reconnect before removing the container. It does not prove a real TURN allocation because the fixture deliberately uses the reserved `.invalid` domain.
+The `session-image` GitHub workflow builds and loads each architecture independently under Buildx on GitHub's native Ubuntu 24.04 x86_64 and arm64 runners, then checks `wpesrc`, `webrtcsink`, `openh264enc`, the non-root user, supervisor syntax, and embedded component versions. It rejects an ICE fixture with unsafe permissions, then starts the image with a valid read-only TURN fixture plus the production read-only/capability/tmpfs restrictions. The smoke waits for Docker health, proving the pinned GStreamer build parses the TURN properties, verifies loopback-only signaling, rejects a bad bootstrap secret and a second controller, and proves the controller lease can reconnect before removing the container. It does not prove a real TURN allocation because the fixture deliberately uses the reserved `.invalid` domain.
 
 Install the reviewed host policy without changing its bytes:
 
