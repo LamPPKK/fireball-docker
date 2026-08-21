@@ -127,6 +127,19 @@
             && producer.meta?.name === "fireball-session"
           ));
           state.producerCount = producers.length;
+          if (producers.length === 0) {
+            setTimeout(() => {
+              if (state.phase === "starting") {
+                try {
+                  send({ type: "list" });
+                } catch (error) {
+                  fail(error);
+                }
+              }
+            }, 500);
+            render();
+            return;
+          }
           if (producers.length !== 1) throw new Error(`expected one Fireball producer, received ${producers.length}`);
           producerId = producers[0].id;
           send({ type: "startSession", peerId: producerId });
