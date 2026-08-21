@@ -38,6 +38,8 @@
         videoPackets: 0,
         audioPackets: 0,
         videoFrames: 0,
+        localCandidateType: "",
+        remoteCandidateType: "",
         controlOpen: false,
         controlAcknowledged: false,
         signalingClosed: false,
@@ -46,7 +48,9 @@
       const status = document.querySelector("#status");
       const video = document.querySelector("#stream");
       const socket = new WebSocket(`ws://${location.host}/signaling`);
-      const connection = new RTCPeerConnection({ iceServers: [] });
+      const iceConfiguration = __FIREBALL_ICE_CONFIGURATION__;
+      const expectRelay = iceConfiguration.iceTransportPolicy === "relay";
+      const connection = new RTCPeerConnection(iceConfiguration);
       const pendingRemoteCandidates = [];
       const pendingLocalCandidates = [];
       let channelId = "";
@@ -297,8 +301,32 @@
             state.audioCodec = codec?.mimeType ?? state.audioCodec;
           }
         }
+        let selectedPair;
+        for (const item of report.values()) {
+          if (item.type === "transport" && item.selectedCandidatePairId) {
+            selectedPair = report.get(item.selectedCandidatePairId);
+            break;
+          }
+          if (
+            item.type === "candidate-pair"
+            && item.state === "succeeded"
+            && (item.selected === true || item.nominated === true)
+          ) {
+            selectedPair = item;
+          }
+        }
+        if (selectedPair) {
+          const localCandidate = report.get(selectedPair.localCandidateId);
+          const remoteCandidate = report.get(selectedPair.remoteCandidateId);
+          state.localCandidateType = localCandidate?.candidateType ?? state.localCandidateType;
+          state.remoteCandidateType = remoteCandidate?.candidateType ?? state.remoteCandidateType;
+        }
         const videoCodecMatches = state.videoCodec.toLowerCase() === "video/h264";
         const audioCodecMatches = state.audioCodec.toLowerCase() === "audio/opus";
+        const relayMatches = !expectRelay || (
+          state.localCandidateType.toLowerCase() === "relay"
+          && state.remoteCandidateType.toLowerCase() === "relay"
+        );
         if (
           state.signalingReady
           && state.browserH264Capable
@@ -314,6 +342,7 @@
           && state.videoPackets > 0
           && state.audioPackets > 0
           && state.videoFrames > 0
+          && relayMatches
           && state.controlOpen
           && state.controlAcknowledged
         ) {

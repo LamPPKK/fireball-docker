@@ -11,6 +11,7 @@ const bwrapWrapper = await readFile(new URL("../session/fireball-bwrap-wrapper.c
 const containerSmoke = await readFile(new URL("../session/container-smoke.mjs", import.meta.url), "utf8");
 const isolationGate = await readFile(new URL("./real-isolation-gate.mjs", import.meta.url), "utf8");
 const mediaGate = await readFile(new URL("./real-media-gate.mjs", import.meta.url), "utf8");
+const turnGate = await readFile(new URL("./real-turn-gate.mjs", import.meta.url), "utf8");
 const mediaFixture = await readFile(
   new URL("./fixtures/rswebrtc-media-smoke.html", import.meta.url),
   "utf8",
@@ -127,7 +128,10 @@ for (const required of [
 assert.match(imageWorkflow, /npm run container:smoke --prefix session/);
 assert.match(imageWorkflow, /npm run session:isolation:smoke/);
 assert.match(imageWorkflow, /npm run session:media:smoke/);
+assert.match(imageWorkflow, /npm run session:turn:smoke/);
 assert.match(imageWorkflow, /Smoke rswebrtc H\.264, Opus, control, reconnect, and burn/);
+assert.match(imageWorkflow, /Smoke relay-only TURN media and control twice/);
+assert.match(imageWorkflow, /apt-get install -y --no-install-recommends coturn/);
 assert.match(imageWorkflow, /Install pinned Firefox OpenH264 test codec/);
 assert.match(imageWorkflow, /MOZ_GMP_PATH/);
 assert.match(imageWorkflow, /MOZ_LOG: GMP:5/);
@@ -180,7 +184,10 @@ for (const required of [
 }
 assert.doesNotMatch(isolationGate, /--privileged|seccomp=unconfined|systempaths=unconfined/);
 for (const required of [
-  "new RTCPeerConnection({ iceServers: [] })",
+  "__FIREBALL_ICE_CONFIGURATION__",
+  "new RTCPeerConnection(iceConfiguration)",
+  'state.localCandidateType.toLowerCase() === "relay"',
+  'state.remoteCandidateType.toLowerCase() === "relay"',
   "video/h264",
   "audio/opus",
   "browserH264Capable",
@@ -197,6 +204,8 @@ for (const required of [
   'assertCommand("geckodriver"',
   'assertCommand("firefox"',
   '"media.gmp-gmpopenh264.enabled": true',
+  "FIREBALL_SMOKE_EXPECT_RELAY",
+  "parseBrowserIceConfiguration",
   "reportWebDriverDiagnostics()",
   'index.html?pass=${encodeURIComponent(passId)}',
   "redactContainerLogs(logs)",
@@ -210,9 +219,21 @@ for (const required of [
 ]) {
   assert.ok(mediaGate.includes(required), `real media gate is missing: ${required}`);
 }
-assert.doesNotMatch(mediaGate, /FIREBALL_SMOKE_ICE_SERVERS_FILE|--privileged|seccomp=unconfined|systempaths=unconfined/);
+assert.doesNotMatch(mediaGate, /--privileged|seccomp=unconfined|systempaths=unconfined/);
 assert.doesNotMatch(mediaGate, /\/#pass=/);
 assert.doesNotMatch(mediaFixture, /signalingToken|signalingTicket|[?&](?:token|ticket)=/);
+for (const required of [
+  'command("sudo", [',
+  '"install", "-o", "root", "-g", "10001", "-m", "0440"',
+  'spawn("turnserver"',
+  'ice_transport_policy: "relay"',
+  'iceTransportPolicy: "relay"',
+  'FIREBALL_SMOKE_EXPECT_RELAY: "1"',
+  'new URL("./real-media-gate.mjs"',
+]) {
+  assert.ok(turnGate.includes(required), `real TURN gate is missing: ${required}`);
+}
+assert.doesNotMatch(turnGate, /FIREBALL_SMOKE_TURN_(?:USERNAME|PASSWORD)|--privileged|seccomp=unconfined/);
 assert.equal(openh264Manifest.schema_version, 1);
 assert.equal(openh264Manifest.plugin_version, "2.6.0");
 assert.equal(openh264Manifest.source.repository, "mozilla-firefox/firefox");

@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { isAbsolute, normalize } from "node:path";
 
 import WebSocket, { WebSocketServer } from "ws";
 
@@ -19,7 +20,13 @@ const image = process.argv[2];
 const platform = process.argv[3];
 const appArmorProfile = process.env.FIREBALL_SMOKE_APPARMOR_PROFILE;
 const seccompProfilePath = process.env.FIREBALL_SMOKE_SECCOMP_PROFILE;
-const fixture = await readFile(new URL("./fixtures/rswebrtc-media-smoke.html", import.meta.url));
+const iceServersFile = process.env.FIREBALL_SMOKE_ICE_SERVERS_FILE;
+const browserIceFile = process.env.FIREBALL_SMOKE_BROWSER_ICE_FILE;
+const expectRelay = process.env.FIREBALL_SMOKE_EXPECT_RELAY === "1";
+const fixtureTemplate = await readFile(
+  new URL("./fixtures/rswebrtc-media-smoke.html", import.meta.url),
+  "utf8",
+);
 
 if (typeof image !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/@:-]{0,254}$/.test(image)) {
   throw new Error("usage: node real-media-gate.mjs <image> <linux/amd64|linux/arm64>");
@@ -33,6 +40,21 @@ if (!appArmorProfile || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(appArmorProfi
 if (!seccompProfilePath || !/^\/[A-Za-z0-9._/-]+$/.test(seccompProfilePath)) {
   throw new Error("FIREBALL_SMOKE_SECCOMP_PROFILE must be a safe absolute path");
 }
+if (expectRelay) {
+  validateSafeAbsolutePath(iceServersFile, "FIREBALL_SMOKE_ICE_SERVERS_FILE");
+  validateSafeAbsolutePath(browserIceFile, "FIREBALL_SMOKE_BROWSER_ICE_FILE");
+} else if (iceServersFile !== undefined || browserIceFile !== undefined) {
+  throw new Error("TURN files require FIREBALL_SMOKE_EXPECT_RELAY=1");
+}
+const browserIceConfiguration = expectRelay
+  ? parseBrowserIceConfiguration(await readFile(browserIceFile, "utf8"))
+  : { iceServers: [] };
+const fixtureMarker = "__FIREBALL_ICE_CONFIGURATION__";
+assert.equal(fixtureTemplate.split(fixtureMarker).length, 2, "browser ICE configuration marker is invalid");
+const fixture = Buffer.from(
+  fixtureTemplate.replace(fixtureMarker, JSON.stringify(browserIceConfiguration)),
+  "utf8",
+);
 assertCommand("geckodriver", ["--version"]);
 assertCommand("firefox", ["--version"]);
 
@@ -48,6 +70,7 @@ const runtime = new DockerEngineRuntime({
   instanceId,
   appArmorProfile,
   seccompProfile,
+  iceServersFile,
   requestTimeoutMs: 60_000,
   startupHealthAttempts: 120,
   startupHealthIntervalMs: 1_000,
@@ -179,7 +202,9 @@ try {
   assert.equal(managedContainers(instanceId).length, 0, "container remains after media burn");
   assert.equal(managedNetworks(instanceId).length, 0, "network remains after media burn");
 
-  process.stdout.write(`real rswebrtc H.264/Opus/control gate passed twice for ${platform}\n`);
+  process.stdout.write(
+    `real rswebrtc H.264/Opus/control ${expectRelay ? "TURN relay-only " : ""}gate passed twice for ${platform}\n`,
+  );
 } catch (error) {
   await reportBrowserState();
   reportWebDriverDiagnostics();
@@ -331,6 +356,10 @@ function assertMediaEvidence(state) {
   assert.ok(state.videoPackets > 0);
   assert.ok(state.audioPackets > 0);
   assert.ok(state.videoFrames > 0);
+  if (expectRelay) {
+    assert.equal(state.localCandidateType.toLowerCase(), "relay");
+    assert.equal(state.remoteCandidateType.toLowerCase(), "relay");
+  }
   assert.equal(state.controlOpen, true);
   assert.equal(state.controlAcknowledged, true);
   assert.deepEqual(state.errors, []);
@@ -365,11 +394,63 @@ function redactState(state) {
     videoPackets: state.videoPackets,
     audioPackets: state.audioPackets,
     videoFrames: state.videoFrames,
+    localCandidateType: state.localCandidateType,
+    remoteCandidateType: state.remoteCandidateType,
     controlOpen: state.controlOpen,
     controlAcknowledged: state.controlAcknowledged,
     signalingClosed: state.signalingClosed,
     errors: Array.isArray(state.errors) ? state.errors.slice(0, 4) : [],
   };
+}
+
+function parseBrowserIceConfiguration(source) {
+  let document;
+  try {
+    document = JSON.parse(source);
+  } catch {
+    throw new Error("browser ICE configuration is not valid JSON");
+  }
+  if (
+    !isRecord(document)
+    || Object.keys(document).sort().join(",") !== "iceServers,iceTransportPolicy"
+    || document.iceTransportPolicy !== "relay"
+    || !Array.isArray(document.iceServers)
+    || document.iceServers.length !== 1
+  ) {
+    throw new Error("browser ICE configuration shape is invalid");
+  }
+  const server = document.iceServers[0];
+  if (
+    !isRecord(server)
+    || Object.keys(server).sort().join(",") !== "credential,urls,username"
+    || typeof server.username !== "string"
+    || !/^[A-Za-z0-9_-]{16,128}$/.test(server.username)
+    || typeof server.credential !== "string"
+    || !/^[A-Za-z0-9_-]{32,256}$/.test(server.credential)
+    || !Array.isArray(server.urls)
+    || server.urls.length !== 1
+    || typeof server.urls[0] !== "string"
+    || !/^turn:(?:\d{1,3}\.){3}\d{1,3}:\d{1,5}\?transport=udp$/.test(server.urls[0])
+  ) {
+    throw new Error("browser TURN server configuration is invalid");
+  }
+  return document;
+}
+
+function validateSafeAbsolutePath(value, name) {
+  if (
+    typeof value !== "string"
+    || !isAbsolute(value)
+    || normalize(value) !== value
+    || !/^\/[A-Za-z0-9._/-]+$/.test(value)
+    || value.length > 4_096
+  ) {
+    throw new Error(`${name} must be a safe absolute path`);
+  }
+}
+
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function createSession() {

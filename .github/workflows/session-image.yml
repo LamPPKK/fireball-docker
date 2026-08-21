@@ -61,6 +61,11 @@ jobs:
         run: |
           plugin_path="$(node scripts/install-firefox-openh264.mjs install "${{ matrix.platform }}" "$RUNNER_TEMP/fireball-openh264-${{ matrix.suffix }}")"
           printf 'MOZ_GMP_PATH=%s\n' "$plugin_path" >> "$GITHUB_ENV"
+      - name: Install ephemeral coturn test relay
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends coturn
+          turnserver --version
       - name: Load WPE user-namespace AppArmor profile
         run: sudo apparmor_parser -r deploy/apparmor/fireball-session
       - name: Prepare TURN smoke fixtures
@@ -97,6 +102,12 @@ jobs:
           FIREBALL_SMOKE_ICE_SERVERS_FILE: /tmp/fireball-ice-${{ matrix.suffix }}.json
       - name: Smoke rswebrtc H.264, Opus, control, reconnect, and burn
         run: npm run session:media:smoke -- "fireball/session-wpe:test-${{ matrix.suffix }}" "${{ matrix.platform }}"
+        env:
+          FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
+          FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
+          MOZ_LOG: GMP:5
+      - name: Smoke relay-only TURN media and control twice
+        run: npm run session:turn:smoke -- "fireball/session-wpe:test-${{ matrix.suffix }}" "${{ matrix.platform }}"
         env:
           FIREBALL_SMOKE_APPARMOR_PROFILE: fireball-session
           FIREBALL_SMOKE_SECCOMP_PROFILE: ${{ github.workspace }}/deploy/seccomp/fireball-session.json
